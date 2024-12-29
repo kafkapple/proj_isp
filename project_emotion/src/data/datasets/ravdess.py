@@ -11,7 +11,13 @@ import numpy as np
 from sklearn.model_selection import KFold
 
 class RavdessDataset(BaseDataset):
-    def __init__(self, config: Dict[str, Any], split: str):
+    def __init__(self, config: Dict[str, Any], split: str = 'train'):
+        self.config = config
+        self.split = split
+        
+        # 데이터셋 다운로드
+        DatasetDownloader.download_and_extract("ravdess", self.config.dataset.root_dir)
+        
         super().__init__(config, split)
         self.root_dir = Path(config.dataset.root_dir)
         self.sample_rate = config.dataset.audio.sample_rate

@@ -9,15 +9,15 @@ import logging
 from typing import Tuple, Optional
 import kaggle
 from dotenv import load_dotenv
+from src.data.utils.download import DatasetDownloader
 
 class FER2013Dataset(Dataset):
     def __init__(self, config, split='train'):
         self.config = config
         self.split = split
-        self.dataset_path = Path(config.dataset.root_dir)
         
-        # 데이터셋 다운로드 확인 및 처리
-        self._download_dataset()
+        # 데이터셋 다운로드
+        DatasetDownloader.download_and_extract("fer2013", self.config.dataset.root_dir)
         
         # 이미지 경로와 레이블 수집
         self.samples = []
@@ -29,50 +29,14 @@ class FER2013Dataset(Dataset):
         if config.debug.enabled:
             logging.info(f"Loaded {split} dataset with {len(self.samples)} samples")
     
-    def _download_dataset(self):
-        """FER2013 데이터셋 다운로드"""
-        if (self.dataset_path / "train").exists() and (self.dataset_path / "test").exists():
-            if self.config.debug.enabled:
-                logging.info(f"FER2013 dataset already exists at {self.dataset_path}")
-            return
-        
-        try:
-            logging.info("Downloading FER2013 dataset...")
-            self.dataset_path.mkdir(parents=True, exist_ok=True)
-            
-            # Kaggle 인증 설정
-            load_dotenv()
-            os.environ['KAGGLE_USERNAME'] = os.getenv('KAGGLE_USERNAME')
-            os.environ['KAGGLE_KEY'] = os.getenv('KAGGLE_KEY')
-            
-            if not os.getenv('KAGGLE_USERNAME') or not os.getenv('KAGGLE_KEY'):
-                raise ValueError("Kaggle credentials not found in .env file")
-            
-            # 데이터셋 다운로드
-            kaggle.api.authenticate()
-            kaggle.api.dataset_download_files(
-                'msambare/fer2013',
-                path=str(self.dataset_path),
-                unzip=True
-            )
-            
-            if not (self.dataset_path / "train").exists():
-                raise FileNotFoundError(f"Dataset download failed: train directory not found")
-                
-            logging.info(f"Dataset downloaded successfully to {self.dataset_path}")
-            
-        except Exception as e:
-            logging.error(f"Error downloading dataset: {str(e)}")
-            raise
-    
     def _collect_samples(self):
         """이미지 경로와 레이블 수집"""
         if self.split == 'test':
             # 테스트셋은 test 폴더 사용
-            base_path = self.dataset_path / "test"
+            base_path = self.config.dataset.root_dir / "test"
         else:
             # train과 val은 train 폴더에서 분할
-            base_path = self.dataset_path / "train"
+            base_path = self.config.dataset.root_dir / "train"
         
         # 각 감정 클래스 폴더 순회
         for emotion_idx, emotion_name in enumerate(self.config.dataset.class_names):

@@ -52,11 +52,38 @@ class DatasetDownloader:
         root_dir = Path(root_dir)
         root_dir.mkdir(parents=True, exist_ok=True)
         
-        if dataset_name == "ravdess":
-            DatasetDownloader._download_ravdess(root_dir)
-        elif dataset_name == "fer2013":
-            DatasetDownloader._download_fer2013(root_dir)
+        try:
+            # Kaggle 인증 설정
+            load_dotenv()
+            os.environ['KAGGLE_USERNAME'] = os.getenv('KAGGLE_USERNAME')
+            os.environ['KAGGLE_KEY'] = os.getenv('KAGGLE_KEY')
             
+            if not os.getenv('KAGGLE_USERNAME') or not os.getenv('KAGGLE_KEY'):
+                raise ValueError("Kaggle credentials not found in .env file")
+            
+            if dataset_name == "ravdess":
+                kaggle.api.authenticate()
+                kaggle.api.dataset_download_files(
+                    'uwrfkaggler/ravdess-emotional-speech-audio',
+                    path=str(root_dir),
+                    unzip=True
+                )
+            elif dataset_name == "fer2013":
+                kaggle.api.authenticate()
+                kaggle.api.dataset_download_files(
+                    'msambare/fer2013',
+                    path=str(root_dir),
+                    unzip=True
+                )
+            else:
+                raise ValueError(f"Unknown dataset: {dataset_name}")
+                
+            logging.info(f"Dataset {dataset_name} downloaded successfully to {root_dir}")
+            
+        except Exception as e:
+            logging.error(f"Error downloading dataset {dataset_name}: {str(e)}")
+            raise
+
     @staticmethod
     def _download_fer2013(root_dir: Path):
         csv_path = root_dir / "fer2013.csv"
