@@ -28,6 +28,11 @@ class_names: [
 ]
 
 splits:
-  train: "Training"
-  val: "PrivateTest"
-  test: "PublicTest"
+  train: "train"
+  test: "test"
+  ratios:  # train 데이터에서 validation split 비율
+    train: 0.8
+    val: 0.2
+
+split_method: "random"
+seed: 42

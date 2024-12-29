@@ -6,68 +6,58 @@ from torch.utils.data import Dataset, random_split
 from PIL import Image
 import torchvision.transforms as transforms
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any, List
 import kaggle
 from dotenv import load_dotenv
 from src.data.utils.download import DatasetDownloader
+from src.data.datasets.base import BaseDataset
+import random
 
-class FER2013Dataset(Dataset):
-    def __init__(self, config, split='train'):
-        self.config = config
-        self.split = split
+class FER2013Dataset(BaseDataset):
+    def __init__(self, config: Dict[str, Any], split: str = 'train'):
+        super().__init__(config, split)
         
-        # 데이터셋 다운로드
-        DatasetDownloader.download_and_extract("fer2013", self.config.dataset.root_dir)
-        
-        # 이미지 경로와 레이블 수집
-        self.samples = []
-        self._collect_samples()
-        
-        # 변환 설정
+        self.image_size = config.dataset.image.size
         self.transform = self._get_transforms()
         
-        if config.debug.enabled:
-            logging.info(f"Loaded {split} dataset with {len(self.samples)} samples")
-    
-    def _collect_samples(self):
-        """이미지 경로와 레이블 수집"""
-        if self.split == 'test':
-            # 테스트셋은 test 폴더 사용
-            base_path = self.config.dataset.root_dir / "test"
+        # 전체 train 데이터 로드
+        if split == "test":
+            self.samples = self._collect_samples("test")
         else:
-            # train과 val은 train 폴더에서 분할
-            base_path = self.config.dataset.root_dir / "train"
+            # train 데이터를 train/val로 분할
+            all_train_samples = self._collect_samples("train")
+            train_size = int(len(all_train_samples) * config.dataset.splits.ratios.train)
+            
+            # 랜덤 시드 설정
+            random.seed(config.dataset.seed)
+            indices = list(range(len(all_train_samples)))
+            random.shuffle(indices)
+            
+            if split == "train":
+                split_indices = indices[:train_size]
+            else:  # val
+                split_indices = indices[train_size:]
+                
+            self.samples = [all_train_samples[i] for i in split_indices]
+    
+    def _collect_samples(self, split_name: str) -> List[Tuple[Path, int]]:
+        """데이터셋 샘플 수집"""
+        samples = []
+        split_dir = self.root_dir / split_name
         
-        # 각 감정 클래스 폴더 순회
-        for emotion_idx, emotion_name in enumerate(self.config.dataset.class_names):
-            emotion_path = base_path / emotion_name
-            if not emotion_path.exists():
+        if not split_dir.exists():
+            raise FileNotFoundError(f"Directory not found: {split_dir}")
+            
+        # 각 클래스 디렉토리에서 이미지 수집
+        for class_idx, class_name in enumerate(self.config.dataset.class_names):
+            class_dir = split_dir / class_name
+            if not class_dir.exists():
                 continue
                 
-            # 해당 감정의 모든 이미지 파일 수집
-            for img_path in emotion_path.glob("*.jpg"):  # 또는 *.png 등 실제 확장자에 맞게 수정
-                self.samples.append((str(img_path), emotion_idx))
-        
-        # train/val 분할 처리
-        if self.split != 'test':
-            # 전체 데이터 개수
-            total_size = len(self.samples)
-            # train:val = 0.8:0.2로 분할
-            train_size = int(0.8 * total_size)
-            val_size = total_size - train_size
-            
-            # 랜덤 분할
-            train_indices, val_indices = random_split(
-                range(total_size), 
-                [train_size, val_size],
-                generator=torch.Generator().manual_seed(42)  # 재현성을 위한 시드 설정
-            )
-            
-            # 해당하는 split의 샘플만 유지
-            if self.split == 'train':
-                self.samples = [self.samples[i] for i in train_indices]
-            else:  # val
-                self.samples = [self.samples[i] for i in val_indices]
+            for img_path in class_dir.glob("*.jpg"):  # 또는 다른 이미지 확장자
+                samples.append((img_path, class_idx))
+                
+        return samples
     
     def _get_transforms(self):
         """데이터 변환 설정"""

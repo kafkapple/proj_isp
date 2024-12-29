@@ -90,13 +90,49 @@ class BaseEmotionMetrics:
         logging.info(log_message)
     
     def log_wandb_metrics(self, prefix: str, phase: str):
+        """WandB에 메트릭스 로깅"""
         self._log_confusion_matrix(prefix, phase)
         self._log_roc_pr_curves(prefix, phase)
     
     def _log_confusion_matrix(self, prefix: str, phase: str):
-        # confusion matrix 로깅 구현
-        ...
+        """Confusion Matrix 생성 및 로깅"""
+        cm = confusion_matrix(self.all_labels, self.all_preds)
+        
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=self.class_names,
+                   yticklabels=self.class_names)
+        plt.title(f'{phase.capitalize()} Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        
+        wandb.log({f"{prefix}confusion_matrix": wandb.Image(plt)})
+        plt.close()
 
     def _log_roc_pr_curves(self, prefix: str, phase: str):
-        # ROC/PR curves 로깅 구현
-        ... 
+        """ROC 및 PR 커브 생성 및 로깅"""
+        # 각 클래스별 ROC/PR 커브
+        for i in range(self.num_classes):
+            # One-vs-Rest 방식으로 이진 레이블 생성
+            y_true = (np.array(self.all_labels) == i).astype(int)
+            y_score = np.array(self.all_probs)[:, i]
+            
+            # ROC 커브
+            fpr, tpr, _ = roc_curve(y_true, y_score)
+            plt.figure(figsize=(8, 6))
+            plt.plot(fpr, tpr)
+            plt.title(f'{self.class_names[i]} ROC Curve')
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            wandb.log({f"{prefix}roc_curve_{self.class_names[i]}": wandb.Image(plt)})
+            plt.close()
+            
+            # PR 커브
+            precision, recall, _ = precision_recall_curve(y_true, y_score)
+            plt.figure(figsize=(8, 6))
+            plt.plot(recall, precision)
+            plt.title(f'{self.class_names[i]} Precision-Recall Curve')
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            wandb.log({f"{prefix}pr_curve_{self.class_names[i]}": wandb.Image(plt)})
+            plt.close() 

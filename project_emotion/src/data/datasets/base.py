@@ -1,14 +1,16 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple
+from pathlib import Path
+from torch.utils.data import Dataset
 
-class BaseDataset(ABC):
+class BaseDataset(Dataset):
     """Base class for all emotion datasets"""
     
-    @abstractmethod
     def __init__(self, config: Dict[str, Any], split: str):
         """Initialize dataset"""
         self.config = config
         self.split = split
+        self.root_dir = Path(config.dataset.root_dir)
         
     @abstractmethod
     def __len__(self) -> int:
