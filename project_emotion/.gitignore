@@ -6,8 +6,8 @@ wandb/
 outputs/
 data/
 models/
-! src/data/
-! src/models
+!src/data/
+!src/models/
 _backup/
 
 *.pt
