@@ -1,0 +1,20 @@
+name: "wav2vec"
+pretrained: "facebook/wav2vec2-base"
+ignore_unused_weights: true
+matmul_precision: "medium"
+
+# 모델 freezing 설정
+freeze:
+  enabled: true
+  num_unfrozen_layers: 0  # 0: embedding만 사용, N: 상위 N개 레이어 학습
+  freeze_feature_extractor: true  # 특징 추출기 고정
+  freeze_cnn: true  # CNN 레이어 고정
+
+# 분류기 설정
+classifier:
+  hidden_size: 512
+  num_layers: 2
+  dropout: 0.3
+  use_batch_norm: true
+  activation: "relu"  # relu, gelu, etc.
+  hidden_sizes: [512, 256]  # 각 레이어의 크기 (마지막 레이어는 num_classes로 자동 설정)

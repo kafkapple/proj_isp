@@ -1,0 +1,33 @@
+name: "fer2013"
+root_dir: "data/fer2013"
+
+image:
+  size: 48  # 원본 이미지 크기
+  channels: 1  # grayscale
+  normalize: true
+  mean: [0.485]  # grayscale mean
+  std: [0.229]   # grayscale std
+
+augmentation:
+  enabled: true
+  rotation_range: 20
+  horizontal_flip: true
+  random_crop:
+    enabled: true
+    scale: [0.8, 1.0]
+
+num_classes: 7
+class_names: [
+  "angry",
+  "disgust",
+  "fear",
+  "happy",
+  "sad",
+  "surprise",
+  "neutral"
+]
+
+splits:
+  train: "Training"
+  val: "PrivateTest"
+  test: "PublicTest"

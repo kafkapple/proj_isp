@@ -1,0 +1,12 @@
+max_epochs: 10
+batch_size: 16
+num_workers: 4
+learning_rate: 1e-4
+weight_decay: 1e-4
+gradient_clip_val: 1.0
+accumulate_grad_batches: 1
+
+scheduler:
+  enabled: true
+  type: "cosine"
+  warmup_epochs: 5

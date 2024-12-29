@@ -1,0 +1,52 @@
+name: "ravdess"
+root_dir: "data/ravdess"
+ 
+audio:
+  sample_rate: 16000  # wav2vec2 기본 샘플링 레이트
+  num_channels: 1             # 오디오 채널 수 (1: 모노, 2: 스테레오)
+  duration: 5.0      # 초 단위
+  feature_type: "mfcc"        # 특징 추출 방법 (예: mfcc, spectrogram)
+  n_mfcc: 40                  # 추출할 MFCC 계수의 수 (feature_type이 mfcc인 경우)
+  normalize: true
+  max_length: 10
+
+text:
+  max_length: 128
+
+augmentation:
+  enabled: true
+  noise:
+    enabled: true
+    noise_level: 0.005  # 노이즈 강도 (0 ~ 1)
+  volume:
+    enabled: true
+    min_gain: 0.8      # 최소 볼륨 배수
+    max_gain: 1.2      # 최대 볼륨 배수
+
+num_classes: 8
+class_names: [
+  "neutral",
+  "calm",
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgust",
+  "surprised"
+]
+
+splits:
+  train: "train"
+  val: "validation"
+  test: "test"
+  ratios:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  
+split_method: "random"  # or "kfold"
+seed: 42  # random seed
+
+# K-Fold 설정 (split_method가 "kfold"일 때 사용)
+k_folds: 5
+current_fold: 0
