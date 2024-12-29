@@ -146,3 +146,21 @@ class PretrainedImageModel(pl.LightningModule):
             lr=self.config.train.learning_rate,
             weight_decay=self.config.train.weight_decay
         ) 
+    
+    def on_train_epoch_end(self):
+        metrics = self.train_metrics.compute(prefix="train_")
+        self.train_metrics.reset()
+        
+    def on_validation_epoch_end(self):
+        metrics = self.val_metrics.compute(prefix="val_")
+        self.val_metrics.reset()
+        
+    def on_test_epoch_end(self):
+        metrics = self.test_metrics.compute(prefix="test_")
+        
+        # 메트릭 로깅
+        for name, value in metrics.items():
+            self.log(name, value)
+            
+        self.test_metrics.reset()
+        return metrics 
