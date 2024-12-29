@@ -16,10 +16,9 @@ augmentation:
     enabled: true
     scale: [0.8, 1.0]
 
-num_classes: 7
+num_classes: 6
 class_names: [
   "angry",
-  "disgust",
   "fear",
   "happy",
   "sad",

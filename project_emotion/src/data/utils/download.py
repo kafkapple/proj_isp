@@ -131,11 +131,6 @@ class DatasetDownloader:
     @staticmethod
     def _download_ravdess(root_dir: Path):
         try:
-            # 더 엄격한 존재 여부 체크
-            if (root_dir / "Actor_01").exists() and any((root_dir / "Actor_01").iterdir()):
-                logging.info(f"RAVDESS dataset already exists at {root_dir}")
-                return
-            
             # Kaggle API 인증
             load_dotenv()
             os.environ['KAGGLE_USERNAME'] = os.getenv('KAGGLE_USERNAME')
