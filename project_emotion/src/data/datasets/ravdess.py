@@ -12,13 +12,12 @@ from sklearn.model_selection import KFold
 
 class RavdessDataset(BaseDataset):
     def __init__(self, config: Dict[str, Any], split: str = 'train'):
+        super().__init__(config, split)
+        
         self.config = config
         self.split = split
         
-        # 데이터셋 다운로드
-        DatasetDownloader.download_and_extract("ravdess", self.config.dataset.root_dir)
-        
-        super().__init__(config, split)
+        # 기본 설정 초기화
         self.root_dir = Path(config.dataset.root_dir)
         self.sample_rate = config.dataset.audio.sample_rate
         self.duration = config.dataset.audio.duration
@@ -27,7 +26,7 @@ class RavdessDataset(BaseDataset):
         self.augmentation = config.dataset.augmentation
         self.class_names = config.dataset.class_names
         
-        # 데이터셋 로드
+        # 데이터셋 메타데이터 로드
         self.samples = self._load_samples()
         
     def _check_dataset(self) -> bool:

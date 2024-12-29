@@ -23,22 +23,12 @@ def train(config: DictConfig):
         save_dir=config.dirs.outputs
     )
     
-    # Prepare datasets and dataloaders
-    train_dataset, train_loader = DataFactory.create_dataset_and_loader(
-        config.dataset.name,
-        config,
-        split="train"
-    )
-    val_dataset, val_loader = DataFactory.create_dataset_and_loader(
-        config.dataset.name,
-        config,
-        split="val"
-    )
-    test_dataset, test_loader = DataFactory.create_dataset_and_loader(
-        config.dataset.name,
-        config,
-        split="test"
-    )
+    # 모든 데이터셋과 로더를 한 번에 생성
+    datasets, loaders = DataFactory.create_dataset_and_loaders(config)
+    
+    train_loader = loaders['train']
+    val_loader = loaders['val']
+    test_loader = loaders['test']
        # Initialize model manager
     model_manager = ModelManager(config.model_manager.base_path)
     

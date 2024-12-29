@@ -83,12 +83,19 @@ class ModelManager:
             # 기본 설정
             default_config = {
                 "torch_dtype": torch.float16,
-                "device_map": "auto",
                 "offload_folder": str(self.cache_path / "offload")
             }
             
+            # wav2vec2 모델인 경우 특별 처리
+            if "wav2vec2" in model_id.lower():
+                default_config.pop("device_map", None)  # device_map 설정 제거
+            
             # 사용자 설정과 병합
             model_config = {**default_config, **(config or {})}
+            
+            # wav2vec2 모델인 경우 device_map 설정 제거
+            if "wav2vec2" in model_id.lower() and "device_map" in model_config:
+                model_config.pop("device_map")
             
             # 모델 타입에 따른 클래스 선택
             model_class = {

@@ -30,6 +30,7 @@ dependencies:
   - librosa
   - matplotlib
   - seaborn
+  - accelerate
 
 # libsndfile는 시스템 레벨 의존성입니다
 # Ubuntu/Debian

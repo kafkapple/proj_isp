@@ -9,6 +9,7 @@ import logging
 import kaggle
 from dotenv import load_dotenv
 import requests
+import shutil
 
 class DatasetDownloader:
     DATASET_URLS = {
@@ -16,6 +17,31 @@ class DatasetDownloader:
         "fer2013": "fer2013/fer2013/fer2013.csv"  # Kaggle dataset path
     }
     
+    _instance = None
+    _downloaded = set()  # 다운로드 완료된 데이터셋 추적
+    
+    @classmethod
+    def download_and_extract(cls, dataset_name: str, root_dir: str):
+        root_dir = Path(root_dir)
+        
+        # 더 엄격한 존재 여부 체크
+        if dataset_name == "ravdess":
+            if (root_dir / "Actor_01").exists() and any((root_dir / "Actor_01").iterdir()):
+                logging.info(f"RAVDESS dataset already exists at {root_dir}")
+                return
+        elif dataset_name == "fer2013":
+            if (root_dir / "train").exists() and any((root_dir / "train").iterdir()):
+                logging.info(f"FER2013 dataset already exists at {root_dir}")
+                return
+                
+        # 데이터셋별 다운로드 로직
+        if dataset_name == "ravdess":
+            cls._download_ravdess(root_dir)
+        elif dataset_name == "fer2013":
+            cls._download_fer2013(root_dir)
+        else:
+            raise ValueError(f"Unknown dataset: {dataset_name}")
+        
     def __init__(self):
         # Load environment variables
         load_dotenv()
@@ -47,43 +73,6 @@ class DatasetDownloader:
             # Restrict access to prevent warnings
             kaggle_cred.chmod(0o600)
             
-    @staticmethod
-    def download_and_extract(dataset_name: str, root_dir: str):
-        root_dir = Path(root_dir)
-        root_dir.mkdir(parents=True, exist_ok=True)
-        
-        try:
-            # Kaggle 인증 설정
-            load_dotenv()
-            os.environ['KAGGLE_USERNAME'] = os.getenv('KAGGLE_USERNAME')
-            os.environ['KAGGLE_KEY'] = os.getenv('KAGGLE_KEY')
-            
-            if not os.getenv('KAGGLE_USERNAME') or not os.getenv('KAGGLE_KEY'):
-                raise ValueError("Kaggle credentials not found in .env file")
-            
-            if dataset_name == "ravdess":
-                kaggle.api.authenticate()
-                kaggle.api.dataset_download_files(
-                    'uwrfkaggler/ravdess-emotional-speech-audio',
-                    path=str(root_dir),
-                    unzip=True
-                )
-            elif dataset_name == "fer2013":
-                kaggle.api.authenticate()
-                kaggle.api.dataset_download_files(
-                    'msambare/fer2013',
-                    path=str(root_dir),
-                    unzip=True
-                )
-            else:
-                raise ValueError(f"Unknown dataset: {dataset_name}")
-                
-            logging.info(f"Dataset {dataset_name} downloaded successfully to {root_dir}")
-            
-        except Exception as e:
-            logging.error(f"Error downloading dataset {dataset_name}: {str(e)}")
-            raise
-
     @staticmethod
     def _download_fer2013(root_dir: Path):
         csv_path = root_dir / "fer2013.csv"
@@ -141,39 +130,41 @@ class DatasetDownloader:
 
     @staticmethod
     def _download_ravdess(root_dir: Path):
-        """RAVDESS 데이터셋 다운로드 및 메타데이터 생성"""
-        zip_path = root_dir / "ravdess.zip"
-        
-        # 데이터셋이 이미 존재하는지 확인
-        if list(root_dir.glob("**/*.wav")):
-            logging.info("RAVDESS dataset files already exist")
-        else:
-            if not zip_path.exists():
-                logging.info("Downloading RAVDESS dataset...")
-                url = DatasetDownloader.DATASET_URLS["ravdess"]
-                
-                try:
-                    response = requests.get(url, stream=True)
-                    response.raise_for_status()
-                    
-                    with open(zip_path, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                            
-                    logging.info("Extracting RAVDESS dataset...")
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(root_dir)
-                        
-                    zip_path.unlink()
-                    
-                except Exception as e:
-                    logging.error(f"Error downloading RAVDESS: {e}")
-                    if zip_path.exists():
-                        zip_path.unlink()
-                    raise
+        try:
+            # 더 엄격한 존재 여부 체크
+            if (root_dir / "Actor_01").exists() and any((root_dir / "Actor_01").iterdir()):
+                logging.info(f"RAVDESS dataset already exists at {root_dir}")
+                return
             
-        # 메타데이터 생성
-        DatasetDownloader._generate_ravdess_metadata(root_dir)
+            # Kaggle API 인증
+            load_dotenv()
+            os.environ['KAGGLE_USERNAME'] = os.getenv('KAGGLE_USERNAME')
+            os.environ['KAGGLE_KEY'] = os.getenv('KAGGLE_KEY')
+            
+            if not os.getenv('KAGGLE_USERNAME') or not os.getenv('KAGGLE_KEY'):
+                raise ValueError("Kaggle credentials not found in .env file")
+            
+            # 데이터셋 다운로드
+            kaggle.api.authenticate()
+            kaggle.api.dataset_download_files(
+                'uwrfkaggler/ravdess-emotional-speech-audio',
+                path=str(root_dir),
+                unzip=True
+            )
+            
+            # audio_speech_actors_01-24 폴더에서 파일들을 root_dir로 이동
+            src_dir = root_dir / "audio_speech_actors_01-24"
+            if src_dir.exists():
+                for item in src_dir.iterdir():
+                    if item.is_dir():
+                        shutil.move(str(item), str(root_dir))
+                shutil.rmtree(str(src_dir))
+            
+            logging.info(f"Dataset downloaded and extracted to {root_dir}")
+            
+        except Exception as e:
+            logging.error(f"Error downloading RAVDESS dataset: {str(e)}")
+            raise
 
     @staticmethod
     def _generate_ravdess_metadata(root_dir: Path) -> bool:
