@@ -31,6 +31,21 @@ wandb:
   save_dir: ${dirs.outputs}/wandb
   log_model: false  # 모델 체크포인트 저장 비활성화
   exclude_files: ["*.ckpt", "*.pth", "*.pt"]  # 대용량 파일 제외
+  plots:
+    metrics:
+      - name: "Training Metrics"
+        metrics:
+          - "train/loss"
+          - "val/loss"
+        title: "Loss Curves"
+        x_axis: "step"
+      - name: "Learning Rates"
+        metrics:
+          - "train/lr_group0"  # frozen layers
+          - "train/lr_group1"  # unfrozen layers
+          - "train/lr_group2"  # classifier
+        title: "Learning Rate Schedule"
+        x_axis: "step"
 
 # logging 설정을 직접 포함
 logging:

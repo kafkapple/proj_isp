@@ -91,8 +91,17 @@ class EmotionMetrics:
         # PR Curve 생성 및 저장
         fig_pr = self._plot_pr_curve(y_true, y_score, self.class_names)
         
-        # Classification Report 생성
+        # Classification Report 생성 및 파싱
         report = classification_report(
+            y_true,
+            y_pred,
+            target_names=self.class_names,
+            zero_division=0,
+            output_dict=True  # dictionary 형태로 반환
+        )
+        
+        # Text 형태의 report도 생성 (파일 저장용)
+        report_text = classification_report(
             y_true,
             y_pred,
             target_names=self.class_names,
@@ -101,26 +110,58 @@ class EmotionMetrics:
         
         # WandB 로깅
         if wandb.run is not None:
+            # 기존 로깅
             wandb.log({
                 f"{prefix}/confusion_matrix": wandb.Image(fig_cm),
                 f"{prefix}/roc_curve": wandb.Image(fig_roc),
                 f"{prefix}/pr_curve": wandb.Image(fig_pr),
+            }, step=self.current_epoch)
+            
+            # Classification Report를 테이블로 변환하여 로깅
+            report_table_data = []
+            
+            # 각 클래스별 메트릭 추가
+            for class_name in self.class_names:
+                class_metrics = report[class_name]
+                report_table_data.append([
+                    class_name,
+                    class_metrics['precision'],
+                    class_metrics['recall'],
+                    class_metrics['f1-score'],
+                    class_metrics['support']
+                ])
+            
+            # macro avg, weighted avg 추가
+            for avg_type in ['macro avg', 'weighted avg']:
+                if avg_type in report:
+                    report_table_data.append([
+                        avg_type,
+                        report[avg_type]['precision'],
+                        report[avg_type]['recall'],
+                        report[avg_type]['f1-score'],
+                        report[avg_type]['support']
+                    ])
+            
+            # WandB 테이블 생성 및 로깅
+            wandb.log({
                 f"{prefix}/classification_report": wandb.Table(
+                    columns=["Class", "Precision", "Recall", "F1-score", "Support"],
+                    data=report_table_data
+                ),
+                # 기존 메트릭 테이블도 유지
+                f"{prefix}/metrics": wandb.Table(
                     columns=["Metric", "Value"],
                     data=[[k, v] for k, v in metrics.items()]
                 )
             }, step=self.current_epoch)
         
-        # 로컬 저장
+        # 로컬 파일 저장
         output_dir = Path(self.config.dirs.outputs) / "plots" / str(self.current_epoch)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        fig_cm.savefig(output_dir / f"{prefix}_confusion_matrix.png")
-        fig_roc.savefig(output_dir / f"{prefix}_roc_curve.png")
-        fig_pr.savefig(output_dir / f"{prefix}_pr_curve.png")
-        
+        # Text 형태의 report 저장
         with open(output_dir / f"{prefix}_classification_report.txt", "w") as f:
-            f.write(report)
+            f.write(report_text)
         
         # Close figures to free memory
         plt.close(fig_cm)
@@ -129,7 +170,7 @@ class EmotionMetrics:
         
         print(f"\n{prefix.upper()} Classification Report - Epoch {self.current_epoch}:")
         print("="*50)
-        print(report)
+        print(report_text)
         print("="*50)
         
         return metrics
