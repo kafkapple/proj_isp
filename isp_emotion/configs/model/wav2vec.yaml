@@ -1,0 +1,18 @@
+name: "wav2vec"
+architecture: "wav2vec2"
+pretrained: "facebook/wav2vec2-base"
+
+classifier:
+  hidden_size: 256
+  dropout: 0.1
+
+freeze:
+  enabled: true
+  num_unfrozen_layers: 2
+
+pooling: "mean"
+matmul_precision: "medium"
+
+# 학습 안정화
+layer_norm_eps: 1e-7
+gradient_checkpointing: true

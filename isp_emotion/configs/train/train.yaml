@@ -1,0 +1,68 @@
+# 학습 설정
+batch_size: 32
+max_epochs: 30
+learning_rate: 0.001
+num_workers: 4
+dropout: 0.2
+
+# Two-stage training 설정
+stage1_epochs: 0  # 0으로 설정하면 two-stage training 비활성화
+
+# 추가 trainer 설정
+accumulate_grad_batches: 1
+gradient_clip_val: 1.0  #0.1
+
+# 하드웨어 설정
+accelerator: "auto"  # "cpu", "gpu", "tpu", "auto"
+devices: "auto"      # 숫자 또는 "auto"
+precision: "32"      # "32", "16", "bf16"
+
+dataloader:
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2
+
+# 옵티마이저 설정
+optimizer:
+  name: "adamW"
+  weight_decay: 0.005
+
+# 스케줄러 설정
+scheduler:
+  name: "cosine" #"cosine_warm_restarts"
+  T_0: 10
+  T_mult: 1
+  eta_min: 1e-6
+  warmup_epochs: 5
+  min_lr: 0.00001
+  warmup_start_lr: 1e-6
+
+# Early stopping 설정
+early_stopping:
+  monitor: "val/loss"
+  patience: 10
+  mode: "min"
+  min_delta: 0.001
+
+# Loss 설정
+loss:
+  name: "focal"
+  use_class_weights: true
+  class_weights:
+    mode: "manual"
+    manual_weights: ${dataset.classes.weights}
+  focal:
+    gamma: 2.0
+  label_smoothing: 0.1
+
+# Sampling 설정
+weighted_sampling:
+  enabled: false
+
+# Mixup 설정 추가
+mixup:
+  enabled: true
+  alpha: 0.2  # mixup 강도 (0.1~0.4 범위가 일반적)
+
