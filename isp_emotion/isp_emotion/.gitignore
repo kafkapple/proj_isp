@@ -3,6 +3,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+wandb/
+outputs/
+models/
+data/
+! data/meta.csv
+! src/data
+*.pt
+
+
+.env
 # C extensions
 *.so
 
