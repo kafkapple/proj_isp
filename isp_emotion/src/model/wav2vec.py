@@ -61,6 +61,16 @@ class Wav2VecModel(pl.LightningModule):
         # Loss function initialization
         self.criterion = self._init_criterion()
         
+        # Best metrics tracking
+        self.best_metrics = {
+            'val/loss': float('inf'),
+            'val/accuracy': 0,
+            'val/macro_f1': 0,
+            'train/accuracy': 0,
+            'train/macro_f1': 0,
+            'best_epoch': 0
+        }
+        
     def forward(self, batch):
         x = batch["audio"]
         
@@ -164,15 +174,52 @@ class Wav2VecModel(pl.LightningModule):
 
     def on_train_epoch_end(self):
         metrics = self.train_metrics.compute(prefix="train")
-        self.train_metrics.reset()
+        
+        # Log current metrics with explicit batch_size
         for name, value in metrics.items():
-            self.log(name, value)
+            self.log(name, value, prog_bar=True, batch_size=self.config.train.batch_size)
+        
+        # Store current training metrics for best comparison
+        self._current_train_metrics = metrics
+        
+        # Reset metrics
+        self.train_metrics.reset()
 
     def on_validation_epoch_end(self):
         metrics = self.val_metrics.compute(prefix="val")
-        self.val_metrics.reset()
+        current_loss = metrics.get('val/loss', float('inf'))
+        
+        # Log current metrics with explicit batch_size
         for name, value in metrics.items():
-            self.log(name, value)
+            self.log(name, value, prog_bar=True, batch_size=self.config.train.batch_size)
+        
+        # Update best metrics if validation loss improves
+        if current_loss < self.best_metrics['val/loss']:
+            # Store current metrics as best
+            for key in metrics:
+                if key.startswith('val/'):
+                    self.best_metrics[key] = metrics[key]
+            
+            # Store current training metrics as best
+            if hasattr(self, '_current_train_metrics'):
+                for key in self._current_train_metrics:
+                    if key.startswith('train/'):
+                        self.best_metrics[key] = self._current_train_metrics[key]
+            
+            self.best_metrics['best_epoch'] = self.current_epoch
+            
+            # Log best metrics
+            for key, value in self.best_metrics.items():
+                if key != 'best_epoch':
+                    self.log(f"{key}/best", value, sync_dist=True)
+            
+            # Log best epoch
+            self.log("epoch/best", self.best_metrics['best_epoch'], sync_dist=True)
+        
+        # Reset metrics
+        self.val_metrics.reset()
+        if hasattr(self, '_current_train_metrics'):
+            delattr(self, '_current_train_metrics')  # 임시 저장 데이터 삭제
 
     def configure_optimizers(self):
         # Parameter groups split
