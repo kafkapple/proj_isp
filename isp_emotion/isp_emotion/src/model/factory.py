@@ -1,43 +1,29 @@
 from typing import Dict, Any
 import torch.nn as nn
-import pytorch_lightning as pl
-from omegaconf import OmegaConf, DictConfig
-from .wav2vec import Wav2VecModel
+from omegaconf import DictConfig
+from src.model.wav2vec import Wav2VecModel
 from .image_models import PretrainedImageModel
-from ..metrics.base_metrics import BaseEmotionMetrics
-from ..metrics.image_metrics import ImageEmotionMetrics
-from ..metrics.audio_metrics import AudioEmotionMetrics
+from ..metrics.metrics import EmotionMetrics
+import logging
 
 class ModelFactory:
     @staticmethod
     def create(config: DictConfig):
-        """모델과 트레이너 생성"""
-        model = ModelFactory._create_model(config)
-        metrics = ModelFactory.create_metrics(config.model.name, config)
+        """Create model instance based on config"""
+        model_name = config.model.name.lower()
         
-        # 순환 import 방지를 위해 import 위치 이동
-        from src.trainers.emotion_trainer import EmotionTrainer
-        return EmotionTrainer(model, config, metrics)
-    
-    @staticmethod
-    def _create_model(config: DictConfig):
-        """순수 모델 생성"""
-        if config.model.name == "wav2vec":
-            return Wav2VecModel(config)
-        elif config.model.name == "efficientnet":
+        if model_name == "wav2vec":
+            model = Wav2VecModel(config)
+            logging.info(f"Created model: {type(model)}")  # 모델 타입 로깅
+            return model
+        elif model_name == "efficientnet":
             return PretrainedImageModel(config)
         else:
-            raise ValueError(f"Unknown model: {config.model.name}")
+            raise ValueError(f"Unknown model: {model_name}")
 
     @staticmethod
-    def create_metrics(model_name: str, config: DictConfig) -> BaseEmotionMetrics:
+    def create_metrics(model_name: str, config: DictConfig) -> EmotionMetrics:
         """메트릭스 생성"""
         num_classes = config.dataset.num_classes
         class_names = config.dataset.class_names
-        
-        if model_name in ["resnet", "efficientnet"]:
-            return ImageEmotionMetrics(num_classes, class_names, config)
-        elif model_name == "wav2vec":
-            return AudioEmotionMetrics(num_classes, class_names, config)
-        else:
-            raise ValueError(f"Unknown model type: {model_name}")
+        return EmotionMetrics(num_classes, class_names, config)

@@ -1,18 +1,15 @@
-name: "ravdess"
+# 데이터셋 기본 설정
 root_dir: "data/ravdess"
-# version: "small"  # "small" or "full"
-# 클래스 밸런싱 설정
-balance:
-  enabled: true
-  method: "oversample"  # "oversample" or "undersample"
-  class_specific:
-    neutral:
-      target_ratio: 1.2  # neutral 클래스를 더 많이 샘플링
-  target_ratio: 0.8  # 다른 클래스들
-  target_size: "auto" #null  # null, "auto" 또는 특정 숫자 (예: 1000)
-# 기본 설정
-seed: 42
+name: "ravdess"
 num_classes: 8
+split: "train"  # 기본값 설정
+
+# Split 설정 추가
+split_ratio:
+  train: 0.7
+  val: 0.15
+  test: 0.15
+
 class_names: [
   "neutral",
   "calm",
@@ -24,26 +21,24 @@ class_names: [
   "surprised"
 ]
 
-# 클래스 설정
-classes:
-  names: ${dataset.class_names}
-  weights:
-    neutral: 2.5    # 가중치 증가
-    calm: 1.5
-    happy: 1.5
-    sad: 1.5
-    angry: 1.0
-    fearful: 1.0
-    disgust: 1.0
-    surprised: 1.0
+# 클래스 가중치 설정
+class_weights:
+  neutral: 2.5
+  calm: 1.5
+  happy: 1.5
+  sad: 1.5
+  angry: 1.0
+  fearful: 1.0
+  disgust: 1.0
+  surprised: 1.0
 
 # 오디오 설정
 audio:
   sample_rate: 16000
   duration: 3.0
-  max_length: 48000  # duration * sample_rate
+  max_length: 48000
   normalize: true
-  padding: "zero"  # "zero" or "repeat"
+  padding: "zero"
   channels: 1
 
 # Augmentation 설정
@@ -52,28 +47,19 @@ augmentation:
   transforms:
     noise:
       enabled: true
-      noise_level: 0.008  # 증가
+      noise_level: 0.008
       noise_types: "gaussian"
     volume:
       enabled: true
-      min_gain: 0.75  # 범위 확대
+      min_gain: 0.75
       max_gain: 1.25
-    pitch_shift:  # 새로 추가
+    pitch_shift:
       enabled: false
       steps: [-2, -1, 0, 1, 2]
-    time_stretch:  # 새로 추가
+    time_stretch:
       enabled: false
       rates: [0.9, 0.95, 1.0, 1.05, 1.1]
-    spec_augment:  # SpecAugment 추가
+    spec_augment:
       enabled: false
       freq_mask_param: 20
       time_mask_param: 20
-
-# 데이터셋 분할 설정
-splits:
-  method: "stratified"  # "stratified", "random", "actor", or "kfold"
-  ratios:
-    train: 0.7
-    val: 0.15
-    test: 0.15
-  stratify_by: ["emotion", "actor"]  # stratified split 시 사용할 기준
