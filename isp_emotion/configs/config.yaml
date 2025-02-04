@@ -1,9 +1,8 @@
 defaults:
-  - model: wav2vec
+  - _self_
   - dataset: ravdess
   - train: train
-  - _self_
-
+  - model: wav2vec
 
 general:
   seed: 42
@@ -12,25 +11,28 @@ general:
   hydra_cwd: ${hydra:runtime.cwd}
   name: "emotion_recognition"
 
-
 debug:
-  enabled: true  # 디버그 모드 활성화
-  fast_dev_run: false  # 전체 학습은 정상적으로
+  enabled: false
+  fast_dev_run: false
   n_samples: null  # 전체 데이터셋 사용
-
+  show_model_summary: true
 
 dirs:
-  outputs: "outputs/${general.timestamp}"
-  subdirs: ["checkpoints", "logs", "metrics", "reports"]
+  outputs: outputs/${general.timestamp}
+  subdirs:
+    - checkpoints
+    - logs
+    - predictions
 
 wandb:
-  project: ${general.project}
+  project: "emotion_recognition"
   entity: "ailab_upstage_fastcampus"
   name: "${general.timestamp}"
-  save_dir: "${dirs.outputs}/logs/wandb"
+  save_dir: ${dirs.outputs}/wandb
   log_model: false  # 모델 체크포인트 저장 비활성화
   exclude_files: ["*.ckpt", "*.pth", "*.pt"]  # 대용량 파일 제외
 
+# logging 설정을 직접 포함
 logging:
   show_model_summary: true
   log_every_n_steps: 1  # 매 스텝마다 로깅

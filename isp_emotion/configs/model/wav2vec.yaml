@@ -6,9 +6,10 @@ classifier:
   hidden_size: 256
   dropout: 0.1
 
+# Layer freezing settings
 freeze:
   enabled: true
-  num_unfrozen_layers: 2
+  num_unfrozen_layers: 2  # 상위 2개 레이어만 학습
 
 pooling: "mean"
 matmul_precision: "medium"

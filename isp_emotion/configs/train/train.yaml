@@ -1,9 +1,9 @@
 # 학습 설정
 batch_size: 32
 max_epochs: 30
-learning_rate: 0.001
+learning_rate: 0.0005
 num_workers: 4
-dropout: 0.2
+dropout: 0.3
 
 # Two-stage training 설정
 stage1_epochs: 0  # 0으로 설정하면 two-stage training 비활성화
@@ -27,7 +27,7 @@ dataloader:
 # 옵티마이저 설정
 optimizer:
   name: "adamW"
-  weight_decay: 0.005
+  weight_decay: 0.01
 
 # 스케줄러 설정
 scheduler:
@@ -42,9 +42,9 @@ scheduler:
 # Early stopping 설정
 early_stopping:
   monitor: "val/loss"
-  patience: 10
+  patience: 15
   mode: "min"
-  min_delta: 0.001
+  min_delta: 0.0005
 
 # Loss 설정
 loss:
@@ -52,10 +52,10 @@ loss:
   use_class_weights: true
   class_weights:
     mode: "manual"
-    manual_weights: ${dataset.classes.weights}
+    manual_weights: ${dataset.class_weights}
   focal:
-    gamma: 2.0
-  label_smoothing: 0.1
+    gamma: 1.0
+  label_smoothing: 0.05
 
 # Sampling 설정
 weighted_sampling:
@@ -64,5 +64,5 @@ weighted_sampling:
 # Mixup 설정 추가
 mixup:
   enabled: true
-  alpha: 0.2  # mixup 강도 (0.1~0.4 범위가 일반적)
+  alpha: 0.1
 

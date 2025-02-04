@@ -1,22 +1,22 @@
 from typing import Dict, Any
 import torch
 import torch.nn as nn
+import pytorch_lightning as pl
 from transformers import Wav2Vec2Model
 import logging
-import torch.nn.functional as F
-import os
-import contextlib
-from src.model.base import BaseModel
+import numpy as np
+from src.metrics.metrics import EmotionMetrics
 
-class Wav2VecModel(BaseModel):
+class Wav2VecModel(pl.LightningModule):
     def __init__(self, config: Dict[str, Any]):
-        # 부모 클래스 초기화 (이제 model info 로깅 안 함)
-        super().__init__(config)
+        super().__init__()
+        self.config = config
+        self.save_hyperparameters(config)
         
-        # 모든 컴포넌트 초기화
+        # Model components initialization
         self.model = Wav2Vec2Model.from_pretrained(config.model.pretrained)
         
-        # 레이어 고정 설정
+        # Layer freezing setup
         if config.model.freeze.enabled:
             self._freeze_layers(config.model.freeze.num_unfrozen_layers)
         
@@ -38,9 +38,28 @@ class Wav2VecModel(BaseModel):
         # Gradient Checkpointing 활성화
         self.model.gradient_checkpointing_enable()
         
-        # 모든 초기화가 끝난 후 모델 정보 출력
         if config.debug.enabled:
             self._log_model_info()
+        
+        # Metrics initialization
+        self.train_metrics = EmotionMetrics(
+            config.dataset.num_classes,
+            config.dataset.class_names,
+            config
+        )
+        self.val_metrics = EmotionMetrics(
+            config.dataset.num_classes,
+            config.dataset.class_names,
+            config
+        )
+        self.test_metrics = EmotionMetrics(
+            config.dataset.num_classes,
+            config.dataset.class_names,
+            config
+        )
+        
+        # Loss function initialization
+        self.criterion = self._init_criterion()
         
     def forward(self, batch):
         x = batch["audio"]
@@ -53,7 +72,14 @@ class Wav2VecModel(BaseModel):
             logging.debug(f"Wav2Vec output shape: {outputs.shape}")
         
         outputs = outputs.mean(dim=1)
-        features = self.feature_extractor(outputs)
+        
+        # Evaluation 모드에서는 dropout 비활성화
+        if not self.training:
+            with torch.no_grad():
+                features = self.feature_extractor(outputs)
+        else:
+            features = self.feature_extractor(outputs)
+        
         logits = self.classifier_head(features)
         
         if self.config.debug.enabled:
@@ -62,16 +88,16 @@ class Wav2VecModel(BaseModel):
         return logits
 
     def extract_features(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Late fusion을 위한 feature extraction 메서드"""
-        with torch.no_grad():  # 추론 시에는 gradient 계산 불필요
+        """Feature extraction method for late fusion"""
+        with torch.no_grad():  # no gradient calculation during inference
             return self(batch)
     
     def _log_model_info(self):
-        """모델 정보 로깅"""
+        """Model information logging"""
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         
-        # 각 컴포넌트별 파라미터 수 계산
+        # Calculate parameters for each component
         wav2vec_params = sum(p.numel() for p in self.model.parameters())
         feature_ext_params = sum(p.numel() for p in self.feature_extractor.parameters())
         classifier_params = sum(p.numel() for p in self.classifier_head.parameters())
@@ -94,19 +120,168 @@ class Wav2VecModel(BaseModel):
         logging.info(f"Frozen parameters: {total_params - trainable_params:,}\n")
 
     def _freeze_layers(self, num_unfrozen_layers: int):
-        """Wav2Vec 레이어 고정"""
-        # 전체 모델 고정
+        """Freeze Wav2Vec layers"""
+        # Freeze the entire model
         for param in self.model.parameters():
             param.requires_grad = False
         
-        # 상위 N개 레이어 학습 가능하도록 설정
+        # Set top N layers to be trainable
         if num_unfrozen_layers > 0:
             for layer in self.model.encoder.layers[-num_unfrozen_layers:]:
                 for param in layer.parameters():
                     param.requires_grad = True
 
-# num_unfrozen_layers: 0일 때는 embedding만 사용 (모든 레이어 고정)
-# num_unfrozen_layers: N일 때는 상위 N개 레이어만 학습
+    def training_step(self, batch, batch_idx):
+        if self.config.train.mixup.enabled:
+            mixed_batch, labels_a, labels_b, lam = self._mixup_batch(batch)
+            outputs = self(mixed_batch)
+            loss = lam * self.criterion(outputs, labels_a) + (1 - lam) * self.criterion(outputs, labels_b)
+            
+            # Metric 계산을 위한 추가 forward pass
+            with torch.no_grad():
+                clean_outputs = self(batch)
+                self.train_metrics.update(clean_outputs, batch["label"])
+        else:
+            outputs = self(batch)
+            loss = self.criterion(outputs, batch["label"])
+            self.train_metrics.update(outputs, batch["label"])
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        outputs = self(batch)
+        loss = self.criterion(outputs, batch["label"])
+        self.val_metrics.update(outputs, batch["label"])
+        self.log('val/loss', loss, prog_bar=True)
+        return loss
+
+    def on_train_epoch_start(self):
+        self.train_metrics.set_epoch(self.current_epoch + 1)
+        logging.info(f"\nStarting Epoch {self.current_epoch + 1}")
+
+    def on_validation_epoch_start(self):
+        self.val_metrics.set_epoch(self.current_epoch + 1)
+        logging.info(f"\nStarting Validation Epoch {self.current_epoch + 1}")
+
+    def on_train_epoch_end(self):
+        metrics = self.train_metrics.compute(prefix="train")
+        self.train_metrics.reset()
+        for name, value in metrics.items():
+            self.log(name, value)
+
+    def on_validation_epoch_end(self):
+        metrics = self.val_metrics.compute(prefix="val")
+        self.val_metrics.reset()
+        for name, value in metrics.items():
+            self.log(name, value)
+
+    def configure_optimizers(self):
+        # Parameter groups split
+        frozen_params = []
+        unfrozen_params = []
+        classifier_params = []
+        
+        for name, param in self.named_parameters():
+            if 'model' in name:
+                if param.requires_grad:
+                    unfrozen_params.append(param)
+                else:
+                    frozen_params.append(param)
+            else:
+                classifier_params.append(param)
+        
+        optimizer = torch.optim.AdamW([
+            {'params': frozen_params, 'lr': self.config.train.learning_rate * 0.01},
+            {'params': unfrozen_params, 'lr': self.config.train.learning_rate * 0.1},
+            {'params': classifier_params, 'lr': self.config.train.learning_rate}
+        ], weight_decay=self.config.train.optimizer.weight_decay)
+        
+        scheduler = {
+            "scheduler": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=self.config.train.scheduler.T_0,
+                T_mult=self.config.train.scheduler.T_mult,
+                eta_min=self.config.train.scheduler.eta_min
+            ),
+            "interval": "epoch",
+            "frequency": 1
+        }
+        
+        return [optimizer], [scheduler]
+
+    # Helper methods
+    def _mixup_batch(self, batch):
+        """Mixup augmentation"""
+        alpha = self.config.train.mixup.alpha
+        lam = np.random.beta(alpha, alpha)
+        batch_size = batch["audio"].size(0)
+        index = torch.randperm(batch_size)
+        
+        mixed_audio = lam * batch["audio"] + (1 - lam) * batch["audio"][index]
+        return {
+            "audio": mixed_audio
+        }, batch["label"], batch["label"][index], lam
+
+    def _init_criterion(self):
+        """Loss function initialization"""
+        if self.config.train.loss.name == "focal":
+            from src.losses.focal_loss import FocalLoss
+            weights = self._get_class_weights()
+            return FocalLoss(
+                alpha=weights,
+                gamma=self.config.train.loss.focal.gamma
+            )
+        else:
+            weights = self._get_class_weights()
+            return torch.nn.CrossEntropyLoss(weight=weights)
+
+    def _get_class_weights(self):
+        """Class weight calculation"""
+        if not self.config.train.loss.use_class_weights:
+            return None
+        
+        return torch.tensor([
+            self.config.train.loss.class_weights.manual_weights[name]
+            for name in self.config.dataset.class_names
+        ])
+
+    def test_step(self, batch, batch_idx):
+        """Test step"""
+        outputs = self(batch)
+        loss = self.criterion(outputs, batch["label"])
+        
+        # Metrics update
+        self.test_metrics = getattr(self, 'test_metrics', EmotionMetrics(
+            self.config.dataset.num_classes,
+            self.config.dataset.class_names,
+            self.config
+        ))
+        self.test_metrics.update(outputs, batch["label"])
+        
+        # Log metrics
+        self.log('test/loss', loss, prog_bar=True)
+        return loss
+
+    def on_test_epoch_start(self):
+        """Test epoch start"""
+        if not hasattr(self, 'test_metrics'):
+            self.test_metrics = EmotionMetrics(
+                self.config.dataset.num_classes,
+                self.config.dataset.class_names,
+                self.config
+            )
+        self.test_metrics.set_epoch(self.current_epoch + 1)
+        logging.info(f"\nStarting Test Epoch {self.current_epoch + 1}")
+
+    def on_test_epoch_end(self):
+        """Test epoch end"""
+        metrics = self.test_metrics.compute(prefix="test")
+        self.test_metrics.reset()
+        
+        for name, value in metrics.items():
+            self.log(name, value)
+
+# num_unfrozen_layers: 0  embedding만 사용 (모든 레이어 고정)
+# num_unfrozen_layers: N 상위 N개 레이어만 학습
 # 예를 들어:
 # num_unfrozen_layers: 0 - embedding만 사용
 # num_unfrozen_layers: 2 - 상위 2개 레이어만 학습
