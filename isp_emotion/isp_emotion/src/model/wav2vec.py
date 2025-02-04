@@ -142,26 +142,39 @@ class Wav2VecModel(pl.LightningModule):
                     param.requires_grad = True
 
     def training_step(self, batch, batch_idx):
-        if self.config.train.mixup.enabled:
-            mixed_batch, labels_a, labels_b, lam = self._mixup_batch(batch)
-            outputs = self(mixed_batch)
-            loss = lam * self.criterion(outputs, labels_a) + (1 - lam) * self.criterion(outputs, labels_b)
-            
-            # Metric 계산을 위한 추가 forward pass
-            with torch.no_grad():
-                clean_outputs = self(batch)
-                self.train_metrics.update(clean_outputs, batch["label"])
-        else:
-            outputs = self(batch)
-            loss = self.criterion(outputs, batch["label"])
-            self.train_metrics.update(outputs, batch["label"])
+        """Training step"""
+        # Forward pass
+        outputs = self(batch)
+        loss = self.criterion(outputs, batch["label"])
+        
+        # Metrics update
+        self.train_metrics.update(outputs, batch["label"])
+        
+        # Step-level logging
+        self.log('train/loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+        
+        # Learning rate logging for each parameter group
+        opt = self.optimizers()
+        if isinstance(opt, list):
+            opt = opt[0]
+        
+        for i, param_group in enumerate(opt.param_groups):
+            self.log(f'train/lr_group{i}', param_group['lr'], 
+                    on_step=True, on_epoch=False)
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
+        """Validation step"""
         outputs = self(batch)
         loss = self.criterion(outputs, batch["label"])
+        
+        # Metrics update
         self.val_metrics.update(outputs, batch["label"])
-        self.log('val/loss', loss, prog_bar=True)
+        
+        # Step-level logging
+        self.log('val/loss', loss, prog_bar=True, on_step=True, on_epoch=True)
+        
         return loss
 
     def on_train_epoch_start(self):
