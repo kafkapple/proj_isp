@@ -8,7 +8,8 @@ outputs/
 models/
 data/
 ! data/meta.csv
-! src/data
+! src/data/
+
 *.pt
 
 
