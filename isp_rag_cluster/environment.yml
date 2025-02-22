@@ -1,0 +1,25 @@
+name: isp
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy>=1.24
+  - pandas>=2.0
+  - pip
+  - pip:
+      - langchain-openai
+      - langchain-community
+      - langchain-core
+      - langchain-huggingface
+      - langchain
+      - openai
+      - faiss-cpu
+      - python-dotenv
+      - scikit-learn
+      - tqdm
+      - hydra-core
+      - sentence-transformers
+      - torch
+      - matplotlib
+      - kneed
