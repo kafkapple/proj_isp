@@ -1,0 +1,56 @@
+defaults:
+  - _self_
+
+debug:
+  show_prompt: true
+  show_generation: true
+  show_retrieval: true
+
+data:
+  csv_file: "isear.csv"
+  n_samples: 100 #-1
+  train_size: 0.8  # 제거 가능 (사용하지 않음)
+  val_size: 0.2   # validation set 크기
+  column_mapping:
+    text: "SIT"
+    emotion: "EMOT"
+
+model:
+  provider: "openai" #"lmstudio"
+  openai:
+    chat_model_name: "gpt-3.5-turbo"
+    embedding_model: "text-embedding-3-small"
+  embeddings:
+    default_model: "BAAI/bge-m3"
+    fallback_model: "all-MiniLM-L6-v2"
+  lmstudio:
+    base_url: "http://localhost:1234/v1"
+    api_key: "not-needed"
+  retriever:
+    k: 3  # 검색할 유사 문서 수
+    score_threshold: 0.1  # 임계값 제거 (또는 매우 낮게 설정)
+    fetch_k: 10  # 후보 문서 수 증가
+
+emotions:
+  # 1-7 순서대로 감정 클래스 정의
+  classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+
+analysis:
+  embedding:
+    pca:
+      n_components: 2
+    clustering:
+      k_range: [2, 3, 4, 5, 6, 7, 8, 9, 10]
+      best_k_criterion:
+        type: "combined"  # "intrinsic", "extrinsic", or "combined"
+        metric: "average"  # 개별 메트릭 또는 "average"
+    metrics:
+      intrinsic: ["silhouette", "calinski_harabasz", "davies_bouldin"]
+      extrinsic: ["adjusted_rand", "normalized_mutual_info"]
+    visualization:
+      scatter:
+        cmap: "Set2"  # 클러스터링 scatter plot용
+        alpha: 0.7
+      heatmap:
+        cmap: "RdYlBu_r"  # confusion matrix용
+        fmt: ".2f"  # 소수점 포맷 
