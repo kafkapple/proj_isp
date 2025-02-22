@@ -2,7 +2,22 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+/__pycache__/
+wandb/
+vector_store/
+isear.csv
+outputs/
+results/
+models/
+data/
 
+! src/data/
+
+*.pt
+
+
+.env
 # C extensions
 *.so
 
