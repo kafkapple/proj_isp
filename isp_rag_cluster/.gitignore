@@ -13,6 +13,7 @@ models/
 data/
 .DS_Store/
 
+! src/models/
 ! src/data/
 
 *.pt
