@@ -6,13 +6,17 @@ import seaborn as sns
 from pathlib import Path
 import json
 from datetime import datetime
+from hydra.core.hydra_config import HydraConfig
 
 class MetricsManager:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.results_dir = Path("results") / self.timestamp
-        self.results_dir.mkdir(parents=True, exist_ok=True)
+        # hydra의 작업 디렉토리 사용
+        self.results_dir = Path(HydraConfig.get().runtime.output_dir)
+        
+        # 분석 결과 저장 디렉토리
+        self.analysis_dir = self.results_dir / "analysis"
+        self.analysis_dir.mkdir(parents=True, exist_ok=True)
 
     def _convert_to_serializable(self, obj):
         """numpy 타입을 Python 기본 타입으로 변환"""
@@ -32,22 +36,22 @@ class MetricsManager:
 
     def save_config(self, config_info: dict):
         config_info = self._convert_to_serializable(config_info)
-        with open(self.results_dir / "config.json", "w") as f:
+        with open(self.analysis_dir / "config.json", "w") as f:
             json.dump(config_info, f, indent=2)
 
     def save_metrics(self, metrics: dict):
         metrics = self._convert_to_serializable(metrics)
-        with open(self.results_dir / "metrics.json", "w") as f:
+        with open(self.analysis_dir / "metrics.json", "w") as f:
             json.dump(metrics, f, indent=2)
 
     def save_predictions(self, predictions: list):
         predictions = self._convert_to_serializable(predictions)
         df = pd.DataFrame(predictions)
-        df.to_csv(self.results_dir / "predictions.csv", index=False)
+        df.to_csv(self.analysis_dir / "predictions.csv", index=False)
 
     def save_classification_report(self, y_true: list, y_pred: list, labels: list):
         report = classification_report(y_true, y_pred, labels=labels)
-        with open(self.results_dir / "classification_report.txt", "w") as f:
+        with open(self.analysis_dir / "classification_report.txt", "w") as f:
             f.write(report)
 
     def save_confusion_matrix(self, y_true: list, y_pred: list, labels: list):
@@ -80,5 +84,5 @@ class MetricsManager:
         ax2.set_xlabel('Predicted Label')
         
         plt.tight_layout()
-        plt.savefig(self.results_dir / "confusion_matrix.png", dpi=300)
+        plt.savefig(self.analysis_dir / "confusion_matrix.png", dpi=300)
         plt.close() 

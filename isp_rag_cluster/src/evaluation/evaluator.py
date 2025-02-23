@@ -31,17 +31,24 @@ class Evaluator:
 
     def _evaluate_single(self, row):
         text = row[self.cfg.data.column_mapping.text]
-        true_emotion = row[self.cfg.data.column_mapping.emotion].lower()
+        # true_emotion이 숫자(1-7)로 들어오므로 감정 이름으로 변환 필요
+        emotion_id = str(row[self.cfg.data.column_mapping.emotion])
+        true_emotion = self.cfg.emotions.classes[int(emotion_id) - 1]  # 1-based to 0-based indexing
         
-        retrieved_context = self.analyzer.retriever.retrieve(text)
-        pred_emotion = self.analyzer.generator.generate(retrieved_context, text)
+        # analyzer.analyze_emotion() 메서드를 통해 RAG 사용 여부 제어
+        pred_emotion = self.analyzer.analyze_emotion(text)
 
-        return {
+        # RAG 사용 시에만 retrieved_context 포함
+        result = {
             "text": text,
             "true_emotion": true_emotion,
             "predicted_emotion": pred_emotion,
-            "retrieved_context": retrieved_context
         }
+        
+        if self.cfg.model.use_rag:
+            result["retrieved_context"] = self.analyzer.retriever.retrieve(text)
+        
+        return result
 
     def _calculate_metrics(self, true_emotions, pred_emotions):
         # 모든 경고 메시지 무시

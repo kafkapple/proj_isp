@@ -21,8 +21,8 @@ from tqdm import tqdm
 class EmbeddingAnalyzer:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.results_dir = Path("results") / "embedding_analysis" / self.timestamp
+        #self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.results_dir = Path(cfg.general.outputs) / "embedding_analysis" 
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
     def analyze(self, embeddings: np.ndarray, labels: List[str]):
