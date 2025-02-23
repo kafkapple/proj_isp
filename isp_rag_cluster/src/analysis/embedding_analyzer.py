@@ -1,5 +1,6 @@
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 from sklearn.metrics import (
     silhouette_score, calinski_harabasz_score, davies_bouldin_score,
     adjusted_rand_score, normalized_mutual_info_score
@@ -14,6 +15,8 @@ from typing import List, Dict, Any
 from datetime import datetime
 from collections import Counter
 import json
+import umap
+from tqdm import tqdm
 
 class EmbeddingAnalyzer:
     def __init__(self, cfg):
@@ -24,21 +27,55 @@ class EmbeddingAnalyzer:
         
     def analyze(self, embeddings: np.ndarray, labels: List[str]):
         """임베딩 분석 수행"""
-        # PCA
-        pca_result = self._perform_pca(embeddings)
-        
-        # 클러스터링 및 평가
-        clustering_results = self._perform_clustering(pca_result, labels)
+        if self.cfg.analysis.embedding.method == "traditional":
+            # 기존 방식: 차원 축소 + 클러스터링
+            reduced_data = self._reduce_dimensions(embeddings)
+            clustering_results = self._perform_clustering(reduced_data, labels)
+        else:  # dec
+            # DEC 방식
+            from .deep_clustering import DeepEmbeddedClustering
+            dec = DeepEmbeddedClustering(self.cfg, input_dim=embeddings.shape[1])
+            
+            # 사전 학습
+            print("Pretraining autoencoder...")
+            dec.pretrain(embeddings)
+            
+            # 클러스터링
+            print("\nPerforming deep clustering...")
+            best_k = self._find_best_k_for_dec(dec, embeddings, labels)
+            dec_results = dec.cluster(embeddings, best_k)
+            
+            # 결과 변환
+            reduced_data = dec_results["latent_features"]
+            clustering_results = self._evaluate_dec_results(
+                dec_results["cluster_labels"], 
+                labels, 
+                best_k
+            )
         
         # 결과 저장
-        self._save_results(pca_result, clustering_results, labels)
-        
+        self._save_results(reduced_data, clustering_results, labels)
         return clustering_results
         
-    def _perform_pca(self, embeddings: np.ndarray) -> np.ndarray:
-        """PCA 수행"""
-        pca = PCA(n_components=self.cfg.analysis.embedding.pca.n_components)
-        return pca.fit_transform(embeddings)
+    def _reduce_dimensions(self, embeddings: np.ndarray) -> np.ndarray:
+        """차원 축소 수행"""
+        reducer_type = self.cfg.analysis.embedding.traditional.reducer.type
+        
+        if reducer_type == "pca":
+            reducer = PCA(
+                n_components=self.cfg.analysis.embedding.traditional.reducer.pca.n_components
+            )
+        elif reducer_type == "umap":
+            reducer = umap.UMAP(
+                n_neighbors=self.cfg.analysis.embedding.traditional.reducer.umap.n_neighbors,
+                min_dist=self.cfg.analysis.embedding.traditional.reducer.umap.min_dist,
+                n_components=self.cfg.analysis.embedding.traditional.reducer.umap.n_components,
+                random_state=42
+            )
+        else:
+            raise ValueError(f"Unknown reducer type: {reducer_type}")
+            
+        return reducer.fit_transform(embeddings)
     
     def _perform_clustering(self, data: np.ndarray, true_labels: List[str]) -> Dict[str, Any]:
         results = {
@@ -47,17 +84,30 @@ class EmbeddingAnalyzer:
                 "extrinsic": {}
             },
             "best_k": None,
-            "best_score": 0.0
+            "best_score": 0.0,
+            "clustering_type": self.cfg.analysis.embedding.traditional.clustering.type
         }
         
-        k_range = self.cfg.analysis.embedding.clustering.k_range
+        k_range = self.cfg.analysis.embedding.traditional.clustering.k_range
         
-        # 메트릭 계산
+        # 클러스터링 수행
         for k in k_range:
-            kmeans = KMeans(n_clusters=k, random_state=42)
-            cluster_labels = kmeans.fit_predict(data)
+            if self.cfg.analysis.embedding.traditional.clustering.type == "kmeans":
+                clusterer = KMeans(
+                    n_clusters=k,
+                    n_init=self.cfg.analysis.embedding.traditional.clustering.kmeans.n_init,
+                    random_state=self.cfg.analysis.embedding.traditional.clustering.kmeans.random_state
+                )
+            else:  # gmm
+                clusterer = GaussianMixture(
+                    n_components=k,
+                    covariance_type=self.cfg.analysis.embedding.traditional.clustering.gmm.covariance_type,
+                    random_state=self.cfg.analysis.embedding.traditional.clustering.gmm.random_state
+                )
             
-            # 내부 평가 (davies_bouldin은 반전)
+            cluster_labels = clusterer.fit_predict(data)
+            
+            # 내부 평가
             intrinsic_scores = {
                 "silhouette": silhouette_score(data, cluster_labels),
                 "calinski_harabasz": calinski_harabasz_score(data, cluster_labels),
@@ -77,7 +127,7 @@ class EmbeddingAnalyzer:
         results["knee_points"] = self._find_knee_points(results["metrics"])
         
         # 설정에서 best k 선택 기준 가져오기
-        criterion = self.cfg.analysis.embedding.clustering.best_k_criterion
+        criterion = self.cfg.analysis.embedding.traditional.clustering.best_k_criterion
         metric_type = criterion.type
         metric_name = criterion.metric
         
@@ -172,14 +222,28 @@ class EmbeddingAnalyzer:
         
         return knee_points
 
-    def _save_results(self, pca_result: np.ndarray, clustering_results: Dict[str, Any], true_labels: List[str]):
+    def _save_results(self, reduced_data: np.ndarray, clustering_results: Dict[str, Any], true_labels: List[str]):
         # 시각화 설정
         viz_cfg = self.cfg.analysis.embedding.visualization
         
         # 최적의 k로 클러스터링
         best_k = clustering_results["best_k"]
-        kmeans = KMeans(n_clusters=best_k, random_state=42)
-        cluster_labels = kmeans.fit_predict(pca_result)
+        
+        # 클러스터링 수행
+        if self.cfg.analysis.embedding.traditional.clustering.type == "kmeans":
+            clusterer = KMeans(
+                n_clusters=best_k,
+                n_init=self.cfg.analysis.embedding.traditional.clustering.kmeans.n_init,
+                random_state=self.cfg.analysis.embedding.traditional.clustering.kmeans.random_state
+            )
+        else:  # gmm
+            clusterer = GaussianMixture(
+                n_components=best_k,
+                covariance_type=self.cfg.analysis.embedding.traditional.clustering.gmm.covariance_type,
+                random_state=self.cfg.analysis.embedding.traditional.clustering.gmm.random_state
+            )
+        
+        cluster_labels = clusterer.fit_predict(reduced_data)
         
         # 1. 3개의 서브플롯 생성
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
@@ -189,14 +253,14 @@ class EmbeddingAnalyzer:
         colors = plt.cm.Set2(np.linspace(0, 1, len(unique_emotions)))  # Set2 팔레트 사용
         for emotion, color in zip(unique_emotions, colors):
             mask = np.array(true_labels) == emotion
-            ax1.scatter(pca_result[mask, 0], pca_result[mask, 1], 
+            ax1.scatter(reduced_data[mask, 0], reduced_data[mask, 1], 
                        c=[color], label=emotion, 
                        alpha=viz_cfg.scatter.alpha)
         ax1.set_title('Emotion Classes')
         ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # Clustering 결과 scatter plot
-        scatter = ax2.scatter(pca_result[:, 0], pca_result[:, 1], 
+        scatter = ax2.scatter(reduced_data[:, 0], reduced_data[:, 1], 
                             c=cluster_labels, 
                             cmap=viz_cfg.scatter.cmap,
                             alpha=viz_cfg.scatter.alpha)
@@ -386,4 +450,62 @@ class EmbeddingAnalyzer:
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(self.results_dir / filename)
-        plt.close() 
+        plt.close()
+
+    def _find_best_k_for_dec(self, dec: 'DeepEmbeddedClustering', data: np.ndarray, labels: List[str]) -> int:
+        """DEC를 위한 최적의 k 찾기"""
+        k_range = self.cfg.analysis.embedding.traditional.clustering.k_range
+        scores = []
+        
+        # 잠재 특징 추출
+        latent_features = dec.extract_features(data)
+        
+        print("\nFinding best k for DEC...")
+        for k in tqdm(k_range, desc="Testing k values"):
+            # k-means로 클러스터링
+            kmeans = KMeans(n_clusters=k, n_init=20, random_state=42)
+            cluster_labels = kmeans.fit_predict(latent_features)
+            
+            # 평가 메트릭 계산
+            silhouette = silhouette_score(latent_features, cluster_labels)
+            nmi = normalized_mutual_info_score(labels, cluster_labels)
+            
+            # 정규화된 점수의 평균
+            combined_score = (silhouette + nmi) / 2
+            scores.append(combined_score)
+        
+        # 최고 점수의 k 선택
+        best_k_idx = np.argmax(scores)
+        best_k = k_range[best_k_idx]
+        
+        print(f"\nBest k for DEC: {best_k} (Score: {scores[best_k_idx]:.4f})")
+        return best_k
+
+    def _evaluate_dec_results(self, cluster_labels: np.ndarray, true_labels: List[str], best_k: int) -> Dict[str, Any]:
+        """DEC 결과 평가"""
+        results = {
+            "metrics": {
+                "intrinsic": {},
+                "extrinsic": {}
+            },
+            "best_k": best_k,
+            "best_score": 0.0,
+            "clustering_type": "dec"
+        }
+        
+        # 메트릭 계산
+        results["metrics"]["intrinsic"][best_k] = {
+            "silhouette": silhouette_score(data, cluster_labels),
+            "calinski_harabasz": calinski_harabasz_score(data, cluster_labels),
+            "davies_bouldin_inverted": -davies_bouldin_score(data, cluster_labels)
+        }
+        
+        results["metrics"]["extrinsic"][best_k] = {
+            "adjusted_rand": adjusted_rand_score(true_labels, cluster_labels),
+            "normalized_mutual_info": normalized_mutual_info_score(true_labels, cluster_labels)
+        }
+        
+        # 최고 점수 저장
+        results["best_score"] = results["metrics"]["extrinsic"][best_k]["normalized_mutual_info"]
+        
+        return results 
