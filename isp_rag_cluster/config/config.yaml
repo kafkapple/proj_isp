@@ -1,38 +1,59 @@
 defaults:
   - _self_
-
+  - override hydra/sweeper: basic  # basic sweeper 사용
 
 general:
-  outputs: outputs/${now:%Y%m%d_%H%M%S}  # 기본 outputs 경로 설정
-
+  outputs: outputs/${now:%Y%m%d_%H%M%S}  # Default outputs path
+  random_state: 42
+# Experiment variations
 hydra:
-  run:
+  # multirun 출력 디렉토리 설정
+  sweep:
     dir: ${general.outputs}
-  output_subdir: log  # hydra 로그를 outputs/[날짜]/[시간]/log에 저장
-
+    subdir: ${model.use_rag}
+  
+  sweeper:
+    # basic sweeper 설정
+    params:
+      model.use_rag: true,false
+  
+  # 기본 실행 설정
+  run:
+    dir: ${general.outputs}/${model.use_rag}
+  
+  # 멀티런 설정
+  mode: MULTIRUN
+  output_subdir: log  # Save hydra logs to outputs/[date]/[time]/log
+  
 debug:
-  show_prompt: true
-  show_generation: true
+  show_prompt: false
+  show_generation: false #true
   show_retrieval: true
-  show_full_prompt: true  # 전체 프롬프트 출력 여부
+  show_full_prompt: false  # 전체 프롬프트 출력 여부
 
 data:
-  name: "isear"  # 데이터셋 이름 (isear, custom 등)
-  csv_file: "isear.csv"  # 저장될 파일 이름
-  n_samples: 70 #-1  # 최소 각 클래스당 10개 샘플 보장 (7개 클래스 * 10 = 70)
-  train_size: 0.8  # 제거 가능 (사용하지 않음)
+  name: "isear"  # Dataset name (isear, custom, etc.)
+  csv_file: "isear.csv"  # File name to save
+  n_samples: 100 #-1  # Number of samples to use (-1 for all)
+  train_size: 0.8
   val_size: 0.2
   column_mapping:
     text: "SIT"
     emotion: "EMOT"
   datasets:
-    isear:  # isear 데이터셋 관련 설정
+    isear:
       urls:
         - "https://raw.githubusercontent.com/sinmaniphel/py_isear_dataset/master/isear.csv"
       required_columns: ["SIT", "EMOT"]
       separator: "|"
+      emotions:
+        # 1-7 in order of emotion classes
+        classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+# Remove the top-level emotions section and reference dataset emotions
+emotions: ${data.datasets.${data.name}.emotions}
+
 model:
-  use_rag: false #true  # RAG 사용 여부
+  use_rag: true  # Whether to use RAG
   provider: "lmstudio" #"openai"
   openai:
     chat_model_name: "gpt-3.5-turbo"
@@ -42,53 +63,54 @@ model:
     fallback_model: "all-MiniLM-L6-v2"
   lmstudio:
     base_url: "http://localhost:1234/v1"
-    api_key: "not-needed"
+    api_key: "lm-studio"
+    embedding_model: "text-embedding-bge-m3"  # Default value when auto-detection fails
   retriever:
-    k: 3  # 최종적으로 반환할 문서 수 (1-20 권장)
-    score_threshold: 1.5  # L2 거리 임계값 (1.0-2.0 범위 권장, 현재 점수 분포 고려)
-    fetch_k: 10  # 초기 후보 검색 수 (k의 3-4배 권장)
-    search_type: "similarity"  # 검색 방식 ("similarity" 또는 "mmr")
-    # MMR (Maximum Marginal Relevance) 관련 설정
+    k: 3  # Number of documents to return (1-20 recommended)
+    score_threshold: 1.5  # L2 distance threshold (1.0-2.0 recommended)
+    fetch_k: 10  # Initial candidate fetch count (3-4 times k recommended)
+    search_type: "similarity"  # Search method ("similarity" or "mmr")
+    # MMR (Maximum Marginal Relevance) related settings
     mmr:
-      lambda_mult: 0.5  # diversity vs similarity 트레이드오프 (0: max diversity, 1: max similarity)
-    # 성능 관련 설정
-    nprobe: 10  # 검색 시 탐색할 클러스터 수 (높을수록 정확도↑ 속도↓, 4-64 범위 권장)
-    ef_search: 40  # HNSW 그래프 탐색 범위 (높을수록 정확도↑ 속도↓, 20-200 범위 권장)
+      lambda_mult: 0.5  # Diversity vs similarity trade-off (0: max diversity, 1: max similarity)
+    # Performance related settings
+    nprobe: 10  # Number of clusters to search (higher means higher accuracy but slower speed, 4-64 recommended)
+    ef_search: 40  # HNSW graph search range (higher means higher accuracy but slower speed, 20-200 recommended)
   templates:
     base: |
-      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: {emotions}
+      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: ${data.datasets.${data.name}.emotions.classes}
 
       CRITICAL INSTRUCTIONS:
-      1. You MUST return ONLY ONE WORD from this list: {emotions}
+      1. You MUST return ONLY ONE WORD from this list: ${data.datasets.${data.name}.emotions.classes}
       2. DO NOT use any other words or emotions
       3. DO NOT add any explanation or additional text
-      4. Return the emotion word alone
+      4. DO NOT modify or combine the emotion words
+      5. Your response must be EXACTLY ONE of these words, nothing else
+      6. If you're unsure, choose the closest matching emotion from the list
 
       Text to classify: {input}
-      Emotion (one word only):
-    
+      Emotion (select ONE from the list above):
+
     rag: |
-      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: {emotions}
+      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: ${data.datasets.${data.name}.emotions.classes}
 
       CRITICAL INSTRUCTIONS:
-      1. You MUST return ONLY ONE WORD from this list: {emotions}
+      1. You MUST return ONLY ONE WORD from this list: ${data.datasets.${data.name}.emotions.classes}
       2. DO NOT use any other words or emotions
       3. DO NOT add any explanation or additional text
-      4. Return the emotion word alone
+      4. DO NOT modify or combine the emotion words
+      5. Your response must be EXACTLY ONE of these words, nothing else
+      6. If you're unsure, choose the closest matching emotion from the list
 
       Here are some similar examples for reference:
       {examples}
 
       Text to classify: {input}
-      Emotion (one word only):
-
-emotions:
-  # 1-7 순서대로 감정 클래스 정의
-  classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+      Emotion (select ONE from the list above):
 
 analysis:
   embedding:
-    method: "traditional"  # "traditional" or "dec"
+    method: "dec"  # "traditional" or "dec"
     traditional:
       reducer:
         type: "umap"  # "pca" or "umap"
@@ -129,4 +151,3 @@ analysis:
       intrinsic: ["silhouette", "calinski_harabasz", "davies_bouldin"]
       extrinsic: ["adjusted_rand", "normalized_mutual_info"]
 
- 

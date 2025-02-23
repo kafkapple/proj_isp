@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    ConfusionMatrixDisplay
+)
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
@@ -11,15 +14,15 @@ from hydra.core.hydra_config import HydraConfig
 class MetricsManager:
     def __init__(self, cfg):
         self.cfg = cfg
-        # hydra의 작업 디렉토리 사용
+        # Use hydra's working directory
         self.results_dir = Path(HydraConfig.get().runtime.output_dir)
         
-        # 분석 결과 저장 디렉토리
+        # Analysis results save directory
         self.analysis_dir = self.results_dir / "analysis"
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
 
     def _convert_to_serializable(self, obj):
-        """numpy 타입을 Python 기본 타입으로 변환"""
+        """Convert numpy types to Python basic types"""
         if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
             np.int16, np.int32, np.int64, np.uint8,
             np.uint16, np.uint32, np.uint64)):
@@ -55,34 +58,38 @@ class MetricsManager:
             f.write(report)
 
     def save_confusion_matrix(self, y_true: list, y_pred: list, labels: list):
-        """혼동 행렬 저장"""
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
-        
-        # 정규화
-        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        
-        # 두 개의 혼동 행렬 (원본과 정규화) 시각화
+        """Save confusion matrix using sklearn's ConfusionMatrixDisplay"""
+        # Create figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
         
-        # 원본 혼동 행렬
-        sns.heatmap(cm, annot=True, fmt='d', 
-                    xticklabels=labels, yticklabels=labels,
-                    cmap=self.cfg.analysis.embedding.visualization.heatmap.cmap,
-                    ax=ax1)
+        # Plot raw counts
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        disp = ConfusionMatrixDisplay(
+            confusion_matrix=cm,
+            display_labels=labels
+        )
+        disp.plot(
+            ax=ax1,
+            cmap=self.cfg.analysis.embedding.visualization.heatmap.cmap,
+            values_format='d'
+        )
         ax1.set_title('Confusion Matrix (Counts)')
-        ax1.set_ylabel('True Label')
-        ax1.set_xlabel('Predicted Label')
         
-        # 정규화된 혼동 행렬
-        sns.heatmap(cm_normalized, annot=True, 
-                    fmt=self.cfg.analysis.embedding.visualization.heatmap.fmt,
-                    xticklabels=labels, yticklabels=labels,
-                    cmap=self.cfg.analysis.embedding.visualization.heatmap.cmap,
-                    ax=ax2)
+        # Plot normalized values
+        cm_normalized = confusion_matrix(
+            y_true, y_pred, labels=labels, normalize='true'
+        )
+        disp_norm = ConfusionMatrixDisplay(
+            confusion_matrix=cm_normalized,
+            display_labels=labels
+        )
+        disp_norm.plot(
+            ax=ax2,
+            cmap=self.cfg.analysis.embedding.visualization.heatmap.cmap,
+            values_format=self.cfg.analysis.embedding.visualization.heatmap.fmt
+        )
         ax2.set_title('Confusion Matrix (Normalized)')
-        ax2.set_ylabel('True Label')
-        ax2.set_xlabel('Predicted Label')
         
         plt.tight_layout()
-        plt.savefig(self.analysis_dir / "confusion_matrix.png", dpi=300)
+        plt.savefig(self.analysis_dir / "confusion_matrix.png", dpi=300, bbox_inches='tight')
         plt.close() 

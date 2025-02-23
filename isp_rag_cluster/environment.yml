@@ -1,11 +1,19 @@
 name: isp
 channels:
+  - pytorch
+  - nvidia
   - conda-forge
   - defaults
 dependencies:
-  - python=3.11
+  - python=3.10
   - numpy>=1.24
   - pandas>=2.0
+  - pillow
+  - matplotlib
+  - pytorch==2.0.0
+  - torchvision==0.15.0
+  - torchaudio==2.0.0
+  - pytorch-cuda=11.8
   - pip
   - pip:
       - langchain-openai
@@ -20,8 +28,7 @@ dependencies:
       - tqdm
       - hydra-core
       - sentence-transformers
-      - torch
-      - matplotlib
       - kneed
       - umap-learn
-      - torchvision
+      - seaborn
+      - omegaconf

@@ -11,15 +11,12 @@ class DataManager:
         for id, emotion in self.emotion_map.items():
             print(f"ID {id}: {emotion}")
         print("-" * 80)
-        
-        # 데이터 다운로드 (필요한 경우)
+
         csv_path = download_isear_dataset(cfg)
         
         print("Loading data...")
-        # 데이터셋 설정 가져오기
         dataset_cfg = cfg.data.datasets[cfg.data.name]
         
-        # 원본 데이터 로드
         df = pd.read_csv(
             csv_path,
             sep=dataset_cfg.separator,
@@ -30,26 +27,25 @@ class DataManager:
             dtype=str
         )
         
-        # 필요한 컬럼 추출 및 전처리
         required_columns = dataset_cfg.required_columns
         if not all(col in df.columns for col in required_columns):
-            # 컬럼명에 구분자가 포함된 경우 처리
+            #  Column names contain the separator
             df.columns = [col.split(dataset_cfg.separator)[0] for col in df.columns]
         
-        # 필요한 컬럼만 선택
+        # Select only the required columns
         self.df = df[required_columns]
         
-        # 감정 레이블 정규화
+        # Normalize emotion labels
         self.df['EMOT'] = self.df['EMOT'].str.lower()
         
-        # 결측치 및 중복 제거
+        # Drop missing values and duplicates
         self.df = self.df.dropna()
         self.df = self.df.drop_duplicates()
         
-        # 초기 클래스 분포 출력
+        # Print initial class distribution
         self._print_class_distribution("Initial class distribution:", self.df)
         
-        # n_samples가 -1이 아닐 때만 stratified 샘플링
+        # Stratified sampling only when n_samples is not -1
         if cfg.data.n_samples > 0:
             self.df = self._stratified_sample(
                 self.df, 
@@ -62,7 +58,7 @@ class DataManager:
         print(f"\nTotal samples: {len(self.df)}")
         
     def _print_class_distribution(self, title: str, df: pd.DataFrame):
-        """클래스 분포 출력"""
+        """Print class distribution"""
         dist = df[self.cfg.data.column_mapping.emotion].value_counts()
         total = len(df)
         
@@ -73,7 +69,7 @@ class DataManager:
             print(f"{emotion:10}: {count:5} ({percentage:5.1f}%)")
     
     def _stratified_sample(self, df: pd.DataFrame, n_samples: int, stratify_col: str):
-        """층화 샘플링 수행"""
+        """Perform stratified sampling"""
         if n_samples >= len(df):
             return df
             
@@ -85,18 +81,18 @@ class DataManager:
         ).reset_index(drop=True)
         
     def split_data(self):
-        """stratified train/val split 수행"""
+        """Perform stratified train/val split"""
         print("\nSplitting data...")
         
-        # train/val 분할 (stratified)
+        # train/val split (stratified)
         train_df, val_df = train_test_split(
             self.df, 
-            test_size=self.cfg.data.val_size,  # validation size 직접 사용
+            test_size=self.cfg.data.val_size,  # validation size directly used
             stratify=self.df[self.cfg.data.column_mapping.emotion],
-            random_state=42
+            random_state=self.cfg.general.random_state
         )
         
-        # 분할 결과의 클래스 분포 출력
+        # Print class distribution after splitting
         print("\nClass distributions after splitting:")
         self._print_class_distribution("Train set:", train_df)
         self._print_class_distribution("Validation set:", val_df)

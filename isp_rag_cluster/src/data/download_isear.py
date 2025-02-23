@@ -7,47 +7,47 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def download_isear_dataset(cfg, save_dir: str = "data") -> str:
-    """데이터셋을 다운로드합니다.
+    """Download the dataset.
     
     Args:
-        cfg: 설정 객체
-        save_dir: 기본 데이터 디렉토리
+        cfg: Configuration object
+        save_dir: Default data directory
         
     Returns:
-        생성된 CSV 파일의 경로
+        Path to the created CSV file
     """
-    # 데이터셋별 저장 디렉토리 생성
+    # Create directory for dataset-specific files
     dataset_dir = Path(save_dir) / cfg.data.name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     
     csv_path = dataset_dir / cfg.data.csv_file
     
-    # 이미 파일이 존재하면 스킵
+    # If file already exists, skip
     if csv_path.exists():
-        logger.info(f"데이터셋이 이미 존재합니다: {csv_path}")
+        logger.info(f"Dataset already exists: {csv_path}")
         return str(csv_path)
     
     if cfg.data.name == "isear":
-        # ISEAR 데이터셋 다운로드
+        # Download ISEAR dataset
         url = cfg.data.datasets.isear.urls[0]
         try:
-            logger.info(f"ISEAR 데이터셋 다운로드 중... (URL: {url})")
+            logger.info(f"Downloading ISEAR dataset... (URL: {url})")
             response = requests.get(url)
             response.raise_for_status()
             
-            # 파일로 직접 저장
+            # Save directly to file
             with open(csv_path, 'wb') as f:
                 f.write(response.content)
                 
-            logger.info(f"데이터셋이 {csv_path}에 저장되었습니다.")
+            logger.info(f"Dataset saved to {csv_path}")
             return str(csv_path)
             
         except Exception as e:
-            error_msg = f"데이터 다운로드 실패: {str(e)}"
+            error_msg = f"Failed to download dataset: {str(e)}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
     else:
-        error_msg = f"지원하지 않는 데이터셋입니다: {cfg.data.name}"
+        error_msg = f"Unsupported dataset: {cfg.data.name}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
