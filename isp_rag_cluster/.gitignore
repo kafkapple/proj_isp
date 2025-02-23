@@ -11,6 +11,7 @@ outputs/
 results/
 models/
 data/
+.DS_Store/
 
 ! src/data/
 
