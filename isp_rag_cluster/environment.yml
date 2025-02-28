@@ -1,36 +1,33 @@
 name: isp
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
   - python=3.10
-  - numpy>=1.24
-  - pandas>=2.0
-  - pillow
-  - matplotlib
-  - pytorch==2.0.0
-  - torchvision==0.15.0
-  - torchaudio==2.0.0
-  - pytorch-cuda=11.8
   - pip
   - pip:
-      - langchain-openai
-      - langchain-community
-      - langchain-core
-      - langchain-huggingface
-      - langchain
-      - openai
-      - faiss-cpu
-      - python-dotenv
-      - scikit-learn
-      - tqdm
-      - hydra-core
-      - sentence-transformers
-      - kneed
-      - umap-learn
-      - seaborn
-      - omegaconf
-      - tensorflow
-      - tf-keras
+    - langchain
+    - openai
+    - faiss-cpu
+    - python-dotenv
+    - tensorflow
+    - numpy>=1.24
+    - pandas>=2.0
+    - pillow
+    - matplotlib
+    - langchain-openai
+    - langchain-community
+    - langchain-core
+    - langchain-huggingface
+    - scikit-learn
+    - tqdm
+    - hydra-core
+    - sentence-transformers
+    - kneed
+    - umap-learn
+    - seaborn
+    - omegaconf
+    - tensorflow
+    - tf-keras
+    - python-dotenv
+    - ollama

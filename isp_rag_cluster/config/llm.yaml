@@ -7,7 +7,7 @@ general:
   retry_invalid_predictions: true  # 기본값은 false로 설정
 data:
   name: "isear"  # Dataset name (isear, custom, etc.
-  n_samples: -1 #100 # Number of samples to use (-1 for all)
+  n_samples: 100 #100 # Number of samples to use (-1 for all)
   default_emotion: "sadness"
   train_size: 0.8
   val_size: 0.2
@@ -29,7 +29,7 @@ data:
 
 model:
   type: "ollama" #"openai" #'upstage' #'ollama'
-  name: "llama3.2" #"gpt-3.5-turbo" #'solar-1-mini-chat' #'llama3.2' #hf.co/tensorblock/Emotion-LLaMA-GGUF
+  name: "llama3.2" #"qwen2.5" #"gpt-3.5-turbo" #'solar-1-mini-chat' ' #"hf.co/tensorblock/Emotion-LLaMA-GGUF" 
   temperature: 0.1
 
 prompt:

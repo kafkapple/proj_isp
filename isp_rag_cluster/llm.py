@@ -89,9 +89,9 @@ def save_metrics(df, cfg, model, output_dir):
     # 메트릭 결과 저장
     metrics_result = {
         "overall": {
-            "accuracy": report_dict['accuracy'],
-            "macro_avg": report_dict['macro avg'],
-            "weighted_avg": report_dict['weighted avg']
+            "accuracy": report_dict.get('accuracy', 0.0),
+            "macro_avg": report_dict.get('macro avg', {}),
+            "weighted_avg": report_dict.get('weighted avg', {})
         },
         "per_class": {
             label: report_dict[label] for label in report_dict.keys()
@@ -500,9 +500,9 @@ def metric():
     
     # 가장 최근 폴더 선택 (타임스탬프 기준)
     latest_folder = max(output_folders, key=lambda x: x.stat().st_mtime)
-    latest_folder = Path("outputs/20250228_000911_gpt/dataset-isear_model-gpt-3.5-turbo") #Path("outputs/20250228_000911/dataset-isear_model-gpt-3.5-turbo")
+    latest_folder = Path("outputs/20250228_122946_llama3.2/dataset-isear_model-llama3.2") #Path("outputs/20250228_000911/dataset-isear_model-gpt-3.5-turbo")
     # 파일 경로 구성
-    model = "gpt-3.5-turbo"  # 또는 다른 모델명
+    model = "llama3.2"  # 또는 다른 모델명
     model = latest_folder.name.split("_model-")[1]
     file_name = f"dataset-isear_model-{model}.csv"
     latest_folder = latest_folder.parent
