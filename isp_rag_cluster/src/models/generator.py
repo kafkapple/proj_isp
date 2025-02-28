@@ -10,8 +10,9 @@ import json
 from difflib import SequenceMatcher
 
 class Generator(BaseGenerator):
-    def __init__(self, cfg):
+    def __init__(self, cfg, model_info: dict = None):
         super().__init__(cfg)
+        self.model_info = model_info
         self.initialize()
         
     def initialize(self):
@@ -19,23 +20,23 @@ class Generator(BaseGenerator):
         self.provider = self.cfg.model.provider
         self.prompt = self._create_prompt()
         
-        if self.cfg.get('debug', {}).get('show_prompt', False):
-            print("\nPrompt Template:")
-            print("-" * 80)
-            print(self.prompt.messages[0].prompt)
-            print("-" * 80)
-            
         self.emotion_map = {str(i+1): emotion for i, emotion in enumerate(self.cfg.emotions.classes)}
         
+        # Initialize the model
         if self.provider == "openai":
             self.model = ChatOpenAI(
                 model_name=self.cfg.model.openai.chat_model_name,
-                temperature=0
+                temperature=self.cfg.model.openai.temperature
             )
         elif self.provider == "lmstudio":
             self.base_url = self.cfg.model.lmstudio.base_url
             self.client = requests.Session()
-            self.model_info = self._get_model_info()
+            self.model = ChatOpenAI(
+                base_url=self.base_url,
+                api_key=self.cfg.model.lmstudio.api_key,
+                model=self.model_info.get("id") if self.model_info else None,
+                temperature=self.cfg.model.lmstudio.temperature
+            )
     
     def _get_model_info(self) -> dict:
         """Get current loaded model information from LMStudio"""
@@ -91,11 +92,10 @@ class Generator(BaseGenerator):
         
         prompt = ChatPromptTemplate.from_template(template)
         
-        # Debug output
         if self.cfg.debug.show_prompt:
             print("\nPrompt Template:")
             print("-" * 80)
-            print(template)  # 템플릿 자체 출력
+            print(template)
             print("-" * 80)
         
         return prompt
@@ -122,93 +122,75 @@ Emotion: {emotion_name}
         return "\n\n".join(formatted_examples)
 
     def _format_prompt(self, text: str) -> str:
-        """Format base prompt without context"""
-        prompt_args = {
-            "input": text,
-            "emotions": ", ".join(self.cfg.emotions.classes)  # emotion classes 리스트를 문자열로 변환
-        }
-        return self.prompt.format(**prompt_args)
+        """Format prompt without context"""
+        return self.prompt.format(input=text)
 
     def _format_prompt_with_context(self, context: str, text: str) -> str:
-        """Format prompt with RAG context"""
-        prompt_args = {
-            "input": text,
-            "emotions": ", ".join(self.cfg.emotions.classes),  # emotion classes 리스트를 문자열로 변환
-            "examples": self._format_examples(context) if context else ""
-        }
-        return self.prompt.format(**prompt_args)
+        """Format prompt with context"""
+        return self.prompt.format(
+            context=context,
+            input=text
+        )
 
-    def generate(self, context: Optional[str], text: str) -> str:
-        """Generate emotion prediction"""
-        if self.cfg.model.use_rag and context:
+    def generate(self, context: Optional[List[Dict]], text: str) -> str:
+        """Generate response using the appropriate prompt template"""
+        if context:
+            # RAG case: format prompt with context
+            if self.cfg.debug.show_retrieval:
+                print("\nRetrieved Context:")
+                print("-" * 80)
+                print(context)
+                print("-" * 80)
+            
             prompt = self._format_prompt_with_context(context, text)
         else:
+            # Base case: format prompt without context
             prompt = self._format_prompt(text)
-        
-        # Debug: Show formatted prompt
+
+        # Show full prompt if debug enabled
         if self.cfg.debug.show_full_prompt:
-            print("\nFormatted Prompt:")
+            print("\nFull Prompt:")
             print("-" * 80)
             print(prompt)
             print("-" * 80)
+
+        # Generate response
+        response = self.model.invoke(prompt)
+        result = self._parse_response(response.content)
         
-        # Execute prompt and process response
-        if self.provider == "openai":
-            response = self.model.predict(prompt)
-            raw_response = response.strip().lower()
-        elif self.provider == "lmstudio":
-            response = self.client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0
-                }
-            )
-            
-            if response.status_code != 200:
-                raise ValueError(f"Generation failed: {response.json()}")
-            
-            raw_response = response.json()["choices"][0]["message"]["content"].strip().lower()
+        # 유효성 검사
+        valid_emotions = self.cfg.emotions.classes
+        if result not in valid_emotions:
+            print(f"Warning: Invalid emotion '{result}' returned by model")
+            # 기본값으로 가장 적절한 감정 반환 또는 에러 처리
+            return "sadness"  # 또는 다른 처리 방법 선택
         
-        # Normalize response and validate
-        raw_response = raw_response.strip().lower()
-        
-        # Extract last word and clean it
-        words = [w for w in raw_response.split() if w.strip()]
-        pred_emotion = words[-1] if words else ""
-        
-        # Debug output
-        if self.cfg.debug.show_generation:
-            print(f"\nRaw Response: '{raw_response}'")
-            print(f"Extracted emotion: '{pred_emotion}'")
-        
-        # Check if predicted emotion is in allowed classes
-        if pred_emotion not in self.cfg.emotions.classes:
-            print(f"\nWarning: Predicted emotion '{pred_emotion}' not in allowed classes.")
-            
-            # 1. 문자열 유사도 기반 매핑
-            def similarity_ratio(a, b):
-                return SequenceMatcher(None, a, b).ratio()
-            
-            # 각 허용된 감정에 대한 유사도 계산
-            similarities = {
-                emotion: similarity_ratio(pred_emotion, emotion)
-                for emotion in self.cfg.emotions.classes
-            }
-            
-            # 가장 유사한 감정 선택
-            closest_emotion = max(similarities.items(), key=lambda x: x[1])
-            
-            print(f"Mapping '{pred_emotion}' to '{closest_emotion[0]}' (similarity: {closest_emotion[1]:.2f})")
-            pred_emotion = closest_emotion[0]
-        
-        if self.cfg.debug.show_generation:
-            print(f"Final Prediction: '{pred_emotion}'")
-            print("-" * 80)
-        
-        return pred_emotion
+        return result
 
     def _print_debug_info(self):
         # Implementation of _print_debug_info method
         pass 
+
+    def _parse_response(self, response: str) -> str:
+        """Parse model response to extract emotion"""
+        try:
+            # Remove any leading/trailing whitespace and convert to lowercase
+            response = response.strip().lower()
+            
+            # Try to parse as JSON
+            import json
+            response_json = json.loads(response)
+            if isinstance(response_json, dict):
+                # Extract emotion from JSON response
+                if "emotion" in response_json:
+                    emotion = response_json["emotion"].lower()
+                    return emotion
+        except json.JSONDecodeError:
+            # If not JSON, return the cleaned response
+            return response
+        except Exception as e:
+            print(f"Warning: Error parsing response: {e}")
+            return response
+        
+        # If we get here, return the original response
+        return response 

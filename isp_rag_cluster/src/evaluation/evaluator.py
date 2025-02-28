@@ -3,6 +3,10 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 import warnings
 from datetime import datetime
+from pathlib import Path
+import json
+import numpy as np
+from hydra.core.hydra_config import HydraConfig
 
 class Evaluator:
     def __init__(self, analyzer, cfg):
@@ -95,6 +99,25 @@ class Evaluator:
 
     def _save_results(self, predictions, true_emotions, pred_emotions, metrics):
         """Save evaluation results"""
+        # Get Hydra's runtime output directory
+        hydra_config = HydraConfig.get()
+        
+        # Use Hydra's output directory
+        results_dir = Path(hydra_config.runtime.output_dir) / "evaluation"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Convert numpy types to Python native types
+        def convert_to_serializable(obj):
+            if isinstance(obj, (np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.float64, np.float32)):
+                return float(obj)
+            elif isinstance(obj, dict):
+                return {k: convert_to_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_to_serializable(i) for i in obj]
+            return obj
+
         # Get model configuration info
         config_info = {
             "data": {
@@ -105,56 +128,62 @@ class Evaluator:
                 "provider": self.cfg.model.provider,
                 "use_rag": self.cfg.model.use_rag,
                 "embedding": {
-                    "provider": self.cfg.model.provider,
-                    "base_url": self.cfg.model.lmstudio.base_url if self.cfg.model.provider == "lmstudio" else None
+                    "provider": self.cfg.model.provider
                 },
                 "chat": {
                     "provider": self.cfg.model.provider
                 }
             },
-            "retriever": {
-                "k": self.cfg.model.retriever.k,
-                "score_threshold": self.cfg.model.retriever.score_threshold,
-                "search_type": self.cfg.model.retriever.search_type
-            } if self.cfg.model.use_rag else None,
-            "metrics": metrics,
+            "metrics": convert_to_serializable(metrics),
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
         }
 
-        # Safely add model information
-        embedding_info = self.analyzer.embedding_info
-        if isinstance(embedding_info, dict):
-            # Handle nested model info
-            model_info = embedding_info.get("model", {})
-            if isinstance(model_info, dict):
-                config_info["model"]["embedding"]["model_id"] = model_info.get("id", "unknown")
-            else:
-                config_info["model"]["embedding"]["model_id"] = str(model_info)
-        else:
-            config_info["model"]["embedding"]["model_id"] = str(embedding_info)
+        # Safely add model information based on provider
+        if self.cfg.model.provider == "lmstudio":
+            if self.cfg.model.use_rag:
+                embedding_info = self.analyzer.embedding_info
+                if isinstance(embedding_info, dict) and "model" in embedding_info:
+                    config_info["model"]["embedding"]["model_id"] = embedding_info["model"].get("id", "unknown")
+            
+            chat_model_info = self.analyzer.chat_model_info
+            if isinstance(chat_model_info, dict) and "model" in chat_model_info:
+                config_info["model"]["chat"]["model_id"] = chat_model_info["model"].get("id", "unknown")
+        else:  # openai
+            if self.cfg.model.use_rag:
+                config_info["model"]["embedding"]["model_id"] = self.cfg.model.openai.embedding_model
+            config_info["model"]["chat"]["model_id"] = self.cfg.model.openai.chat_model_name
 
-        chat_model_info = self.analyzer.chat_model_info
-        if isinstance(chat_model_info, dict):
-            model_info = chat_model_info.get("model", {})
-            if isinstance(model_info, dict):
-                config_info["model"]["chat"]["model_id"] = model_info.get("id", "unknown")
-            else:
-                config_info["model"]["chat"]["model_id"] = str(model_info)
-        else:
-            config_info["model"]["chat"]["model_id"] = str(chat_model_info)
-        
-        # Save config
-        self.metrics_manager.save_config(config_info)
-        
-        # Save classification report
-        report = classification_report(true_emotions, pred_emotions)
-        with open(self.metrics_manager.analysis_dir / "classification_report.txt", "w") as f:
+        # Save detailed results
+        with open(results_dir / "results.json", "w", encoding="utf-8") as f:
+            json.dump(config_info, f, indent=2, ensure_ascii=False)
+
+        # Save evaluation report
+        report = self._create_evaluation_report(predictions, true_emotions, pred_emotions, metrics)
+        with open(results_dir / "report.txt", "w", encoding="utf-8") as f:
             f.write(report)
+
+    def _create_evaluation_report(self, predictions, true_emotions, pred_emotions, metrics):
+        """Create detailed evaluation report"""
+        report = []
+        report.append("Emotion Classification Evaluation Report")
+        report.append("=" * 50)
         
-        # Save predictions
-        self.metrics_manager.save_predictions(predictions)
+        # Overall metrics
+        report.append("\nOverall Metrics:")
+        report.append("-" * 20)
+        report.append(f"Accuracy: {metrics['overall']['accuracy']:.4f}")
+        report.append(f"Precision: {metrics['overall']['precision']:.4f}")
+        report.append(f"Recall: {metrics['overall']['recall']:.4f}")
+        report.append(f"F1 Score: {metrics['overall']['f1']:.4f}")
         
-        # Save confusion matrix
-        self.metrics_manager.save_confusion_matrix(
-            true_emotions, pred_emotions, self.emotion_classes
-        ) 
+        # Per-class metrics
+        report.append("\nPer-class Metrics:")
+        report.append("-" * 20)
+        for emotion, scores in metrics['per_class'].items():
+            report.append(f"\n{emotion}:")
+            report.append(f"  Precision: {scores['precision']:.4f}")
+            report.append(f"  Recall: {scores['recall']:.4f}")
+            report.append(f"  F1 Score: {scores['f1']:.4f}")
+            report.append(f"  Support: {scores['support']}")
+        
+        return "\n".join(report) 

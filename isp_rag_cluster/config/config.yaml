@@ -3,13 +3,13 @@ defaults:
   - override hydra/sweeper: basic  # basic sweeper 사용
 
 general:
-  outputs: outputs/${now:%Y%m%d_%H%M%S}  # Default outputs path
+  outputs: ${hydra:runtime.output_dir}
   random_state: 42
 # Experiment variations
 hydra:
   # multirun 출력 디렉토리 설정
   sweep:
-    dir: ${general.outputs}
+    dir: outputs/multirun/${now:%Y%m%d_%H%M%S}
     subdir: ${model.use_rag}
   
   sweeper:
@@ -19,22 +19,22 @@ hydra:
   
   # 기본 실행 설정
   run:
-    dir: ${general.outputs}/${model.use_rag}
+    dir: outputs/run/${now:%Y%m%d_%H%M%S}
   
   # 멀티런 설정
   mode: MULTIRUN
   output_subdir: log  # Save hydra logs to outputs/[date]/[time]/log
-  
+
 debug:
-  show_prompt: false
-  show_generation: false #true
-  show_retrieval: true
-  show_full_prompt: false  # 전체 프롬프트 출력 여부
+  show_prompt: true      # 프롬프트 템플릿 자체를 보여줌
+  show_generation: true  # LLM의 생성 결과와 처리 과정을 보여줌
+  show_retrieval: true   # RAG 사용 시 검색된 문서들을 보여줌
+  show_full_prompt: true # 실제 LLM에 전달되는 완성된 프롬프트를 보여줌
 
 data:
   name: "isear"  # Dataset name (isear, custom, etc.)
   csv_file: "isear.csv"  # File name to save
-  n_samples: 100 #-1  # Number of samples to use (-1 for all)
+  n_samples: 100 # Number of samples to use (-1 for all)
   train_size: 0.8
   val_size: 0.2
   column_mapping:
@@ -53,60 +53,253 @@ data:
 emotions: ${data.datasets.${data.name}.emotions}
 
 model:
-  use_rag: true  # Whether to use RAG
-  provider: "lmstudio" #"openai"
+  use_rag: false #true
+  provider: "lmstudio"
   openai:
     chat_model_name: "gpt-3.5-turbo"
     embedding_model: "text-embedding-3-small"
-  embeddings:
-    default_model: "BAAI/bge-m3"
-    fallback_model: "all-MiniLM-L6-v2"
+    temperature: 0.0
   lmstudio:
     base_url: "http://localhost:1234/v1"
     api_key: "lm-studio"
-    embedding_model: "text-embedding-bge-m3"  # Default value when auto-detection fails
+    embedding_model: "text-embedding-all-minilm-l6-v2-embedding" #"text-embedding-bge-m3"
+    temperature: 0.0
   retriever:
-    k: 3  # Number of documents to return (1-20 recommended)
-    score_threshold: 1.5  # L2 distance threshold (1.0-2.0 recommended)
-    fetch_k: 10  # Initial candidate fetch count (3-4 times k recommended)
-    search_type: "similarity"  # Search method ("similarity" or "mmr")
-    # MMR (Maximum Marginal Relevance) related settings
+    k: 3  # Number of documents to retrieve
+    fetch_k: 5  # Number of documents to fetch before filtering
+    score_threshold: 1.5  # Similarity score threshold
+    search_type: "similarity"  # or "mmr"
     mmr:
-      lambda_mult: 0.5  # Diversity vs similarity trade-off (0: max diversity, 1: max similarity)
-    # Performance related settings
-    nprobe: 10  # Number of clusters to search (higher means higher accuracy but slower speed, 4-64 recommended)
-    ef_search: 40  # HNSW graph search range (higher means higher accuracy but slower speed, 20-200 recommended)
+      lambda_mult: 0.5
   templates:
     base: |
-      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: ${data.datasets.${data.name}.emotions.classes}
+        You are an expert in emotion analysis. Given a text input, classify its **primary emotion** strictly as one of the following: **'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame',** or **'guilt'**. **Do not use any other emotions.**
+        ---
+        ## Instructions
 
-      CRITICAL INSTRUCTIONS:
-      1. You MUST return ONLY ONE WORD from this list: ${data.datasets.${data.name}.emotions.classes}
-      2. DO NOT use any other words or emotions
-      3. DO NOT add any explanation or additional text
-      4. DO NOT modify or combine the emotion words
-      5. Your response must be EXACTLY ONE of these words, nothing else
-      6. If you're unsure, choose the closest matching emotion from the list
+        1. **Read and understand** the input text carefully.
+        2. **Strictly classify** the text as one of these **only**: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', or 'guilt'.
+        ---
 
-      Text to classify: {input}
-      Emotion (select ONE from the list above):
+        ## Definitions and Examples
 
+        ### Joy
+        - **Definition:** A feeling of happiness, excitement, or pleasure.
+        - **Examples:**
+        - Receiving good news, celebrating success, spending time with loved ones.
+        - Enjoying a meaningful moment with friends or family.
+        - **Refinement:** If the text expresses relief rather than happiness, classify it as **joy**.
+
+        ### Fear
+        - **Definition:** A response to perceived danger, risk, or uncertainty, often accompanied by anxiety, nervousness, or distress.
+        - **Examples:**
+        - Experiencing a sudden scare or physical danger (e.g., a traffic accident, being chased).
+        - Worrying about an uncertain future or an important exam.
+        - Feeling vulnerable in an unfamiliar or threatening environment.
+        - Hearing about a serious illness or personal risk (e.g., medical tests, a pandemic).
+        - Imagining a loved one being in danger.
+        - Being caught in a situation where you have **no control**.
+        - **Refinements:**
+        - If the emotion is about loss, classify as **sadness**.
+        - If the emotion is about remorse for past actions, classify as **guilt**.
+
+        ### Anger
+        - **Definition:** A feeling of irritation, frustration, or rage in response to a perceived injustice, wrongdoing, or moral outrage.
+        - **Examples:**
+        - Witnessing someone being treated unfairly.
+        - Feeling ignored, rejected, or ridiculed.
+        - Seeing cruelty, unethical behavior, or injustice.
+        - Facing obstacles due to someone else's irresponsibility.
+        - Experiencing personal attacks or insults.
+        - Dealing with broken promises or betrayal.
+        - Encountering discrimination or invasion of personal boundaries.
+        - **Refinement:** If the text shows resentment or frustration, classify as **anger**; if it expresses grief or emotional pain, classify as **sadness**.
+
+        ### Sadness
+        - **Definition:** A feeling of deep sorrow, grief, or loss, often associated with disappointment, longing, or emotional pain.
+        - **Examples:**
+        - Losing a loved one, pet, or cherished relationship.
+        - Feeling lonely or disconnected.
+        - Experiencing personal failure or missed opportunities.
+        - Witnessing suffering or misfortune of others.
+        - Regretting something that cannot be changed.
+        - Feeling rejected or abandoned.
+        - Nostalgia for better times.
+        - Social isolation or exclusion.
+        - Empathy for others' suffering.
+        - **Refinements:**
+        - If the emotion is regret about one's own actions, classify as **guilt**.
+        - If it is about loss or despair, classify as **sadness**.
+        - If the response is due to injustice or frustration, classify as **anger**.
+
+        ### Disgust
+        - **Definition:** A strong aversion, repulsion, or deep-seated rejection toward something perceived as offensive, impure, unethical, or physically revolting.
+        - **Examples:**
+        - Seeing animals or people being mistreated.
+        - Reading about unethical political actions or human rights violations.
+        - Witnessing something grotesque or disturbing.
+        - Feeling sickened by someone's behavior (e.g., lying, cheating, betrayal).
+        - Encountering unclean, unhygienic, or repulsive physical conditions.
+        - **Refinements:**
+        - If the reaction is about personal danger, classify as **fear**.
+        - If it is about moral or physical revulsion, classify as **disgust**.
+        - If the feeling is self-directed regarding a moral failing, classify as **guilt**.
+
+        ### Shame
+        - **Definition:** A feeling of humiliation or distress caused by the awareness of wrongdoing or foolish behavior, often accompanied by embarrassment, dishonor, or exposure to judgment.
+        - **Examples:**
+        - Feeling exposed or judged for personal flaws or mistakes.
+        - Experiencing social disapproval or loss of reputation.
+        - Being caught in acts of dishonesty or deceit.
+        - Violating personal or cultural values, leading to feelings of unworthiness.
+        - **Refinements:**
+        - If the emotion focuses on feeling judged or humiliated without explicit remorse for harm, classify as **shame**.
+        - If the emotion includes explicit remorse for harming someone, classify as **guilt**.
+
+        ### Guilt
+        - **Definition:** A feeling of remorse or regret over actions that have harmed others or violated moral principles, focused on personal responsibility rather than external judgment.
+        - **Examples:**
+        - Feeling bad for hurting someone's feelings.
+        - Regretting a past mistake or unethical action.
+        - Realizing that one's negligence caused harm.
+        - Breaking a rule and later feeling remorseful.
+        - **Refinements:**
+        - Only classify as **guilt** if there is explicit harm or clear wrongdoing causing remorse.
+        - If there is no explicit harm mentioned, default to **shame**.
+        - Increase the threshold for guilt; use it only when clear personal responsibility for harm is evident.
+
+        ---
+
+        ## Additional Guidelines:
+        - **Default to Shame:** When the text does not explicitly show remorse for an action but hints at personal inadequacy, classify as **shame**.
+        - **Mixed Cases:** Evaluate the overall tone and select the most prominent emotion.
+        - **Confidence Scoring:** Assign a confidence score between `0` and `1` based on your certainty. If confidence is below `0.6`, lean toward **shame** or **sadness**.
+        - **Output Format:** Return your result as a JSON object with the following structure:
+
+        ```json
+        {{
+        "emotion": "one_of_the_specified_emotions",
+        "confidence_score": confidence_value
+        }}
+
+
+        Now, analyze the text - {input} and output only the JSON response with no additional formatting, code blocks, or explanations.
+       
+
+    
     rag: |
-      You are an expert in emotion analysis. Your task is to classify the emotion as EXACTLY ONE of these words: ${data.datasets.${data.name}.emotions.classes}
+        You are an expert in emotion analysis. Given a text input, classify its **primary emotion** strictly as one of the following: **'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame',** or **'guilt'**. **Do not use any other emotions.**
+        ---
+        ## Instructions
 
-      CRITICAL INSTRUCTIONS:
-      1. You MUST return ONLY ONE WORD from this list: ${data.datasets.${data.name}.emotions.classes}
-      2. DO NOT use any other words or emotions
-      3. DO NOT add any explanation or additional text
-      4. DO NOT modify or combine the emotion words
-      5. Your response must be EXACTLY ONE of these words, nothing else
-      6. If you're unsure, choose the closest matching emotion from the list
+        1. **Read and understand** the input text carefully.
+        2. **Strictly classify** the text as one of these **only**: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', or 'guilt'.
+        ---
 
-      Here are some similar examples for reference:
-      {examples}
+        ## Definitions and Examples
 
-      Text to classify: {input}
-      Emotion (select ONE from the list above):
+        ### Joy
+        - **Definition:** A feeling of happiness, excitement, or pleasure.
+        - **Examples:**
+        - Receiving good news, celebrating success, spending time with loved ones.
+        - Enjoying a meaningful moment with friends or family.
+        - **Refinement:** If the text expresses relief rather than happiness, classify it as **joy**.
+
+        ### Fear
+        - **Definition:** A response to perceived danger, risk, or uncertainty, often accompanied by anxiety, nervousness, or distress.
+        - **Examples:**
+        - Experiencing a sudden scare or physical danger (e.g., a traffic accident, being chased).
+        - Worrying about an uncertain future or an important exam.
+        - Feeling vulnerable in an unfamiliar or threatening environment.
+        - Hearing about a serious illness or personal risk (e.g., medical tests, a pandemic).
+        - Imagining a loved one being in danger.
+        - Being caught in a situation where you have **no control**.
+        - **Refinements:**
+        - If the emotion is about loss, classify as **sadness**.
+        - If the emotion is about remorse for past actions, classify as **guilt**.
+
+        ### Anger
+        - **Definition:** A feeling of irritation, frustration, or rage in response to a perceived injustice, wrongdoing, or moral outrage.
+        - **Examples:**
+        - Witnessing someone being treated unfairly.
+        - Feeling ignored, rejected, or ridiculed.
+        - Seeing cruelty, unethical behavior, or injustice.
+        - Facing obstacles due to someone else's irresponsibility.
+        - Experiencing personal attacks or insults.
+        - Dealing with broken promises or betrayal.
+        - Encountering discrimination or invasion of personal boundaries.
+        - **Refinement:** If the text shows resentment or frustration, classify as **anger**; if it expresses grief or emotional pain, classify as **sadness**.
+
+        ### Sadness
+        - **Definition:** A feeling of deep sorrow, grief, or loss, often associated with disappointment, longing, or emotional pain.
+        - **Examples:**
+        - Losing a loved one, pet, or cherished relationship.
+        - Feeling lonely or disconnected.
+        - Experiencing personal failure or missed opportunities.
+        - Witnessing suffering or misfortune of others.
+        - Regretting something that cannot be changed.
+        - Feeling rejected or abandoned.
+        - Nostalgia for better times.
+        - Social isolation or exclusion.
+        - Empathy for others' suffering.
+        - **Refinements:**
+        - If the emotion is regret about one's own actions, classify as **guilt**.
+        - If it is about loss or despair, classify as **sadness**.
+        - If the response is due to injustice or frustration, classify as **anger**.
+
+        ### Disgust
+        - **Definition:** A strong aversion, repulsion, or deep-seated rejection toward something perceived as offensive, impure, unethical, or physically revolting.
+        - **Examples:**
+        - Seeing animals or people being mistreated.
+        - Reading about unethical political actions or human rights violations.
+        - Witnessing something grotesque or disturbing.
+        - Feeling sickened by someone's behavior (e.g., lying, cheating, betrayal).
+        - Encountering unclean, unhygienic, or repulsive physical conditions.
+        - **Refinements:**
+        - If the reaction is about personal danger, classify as **fear**.
+        - If it is about moral or physical revulsion, classify as **disgust**.
+        - If the feeling is self-directed regarding a moral failing, classify as **guilt**.
+
+        ### Shame
+        - **Definition:** A feeling of humiliation or distress caused by the awareness of wrongdoing or foolish behavior, often accompanied by embarrassment, dishonor, or exposure to judgment.
+        - **Examples:**
+        - Feeling exposed or judged for personal flaws or mistakes.
+        - Experiencing social disapproval or loss of reputation.
+        - Being caught in acts of dishonesty or deceit.
+        - Violating personal or cultural values, leading to feelings of unworthiness.
+        - **Refinements:**
+        - If the emotion focuses on feeling judged or humiliated without explicit remorse for harm, classify as **shame**.
+        - If the emotion includes explicit remorse for harming someone, classify as **guilt**.
+
+        ### Guilt
+        - **Definition:** A feeling of remorse or regret over actions that have harmed others or violated moral principles, focused on personal responsibility rather than external judgment.
+        - **Examples:**
+        - Feeling bad for hurting someone's feelings.
+        - Regretting a past mistake or unethical action.
+        - Realizing that one's negligence caused harm.
+        - Breaking a rule and later feeling remorseful.
+        - **Refinements:**
+        - Only classify as **guilt** if there is explicit harm or clear wrongdoing causing remorse.
+        - If there is no explicit harm mentioned, default to **shame**.
+        - Increase the threshold for guilt; use it only when clear personal responsibility for harm is evident.
+
+        ---
+
+        ## Additional Guidelines:
+        - **Default to Shame:** When the text does not explicitly show remorse for an action but hints at personal inadequacy, classify as **shame**.
+        - **Mixed Cases:** Evaluate the overall tone and select the most prominent emotion.
+        - **Confidence Scoring:** Assign a confidence score between `0` and `1` based on your certainty. If confidence is below `0.6`, lean toward **shame** or **sadness**.
+        - **Output Format:** Return your result as a JSON object with the following structure:
+
+        ```json
+        {{
+        "emotion": "one_of_the_specified_emotions",
+        "confidence_score": confidence_value
+        }}
+
+
+        Now, analyze the text - {input} and output only the JSON response with no additional formatting, code blocks, or explanations.
+       
 
 analysis:
   embedding:
@@ -151,3 +344,4 @@ analysis:
       intrinsic: ["silhouette", "calinski_harabasz", "davies_bouldin"]
       extrinsic: ["adjusted_rand", "normalized_mutual_info"]
 
+ 

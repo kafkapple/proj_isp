@@ -11,7 +11,7 @@ from src.utils.path_manager import get_vector_store_path
 # Load environment variables from .env file
 load_dotenv()
 
-@hydra.main(version_base=None, config_path="config", config_name="config")
+@hydra.main(version_base=None, config_path="config", config_name="config_embedding")
 def main(cfg: DictConfig):
     # Load data
     print("Loading data for embedding analysis...")

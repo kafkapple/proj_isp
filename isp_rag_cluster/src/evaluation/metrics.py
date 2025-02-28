@@ -10,6 +10,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 from hydra.core.hydra_config import HydraConfig
+from typing import Dict, List
 
 class MetricsManager:
     def __init__(self, cfg):
@@ -37,36 +38,40 @@ class MetricsManager:
             return [self._convert_to_serializable(i) for i in obj]
         return obj
 
-    def save_config(self, config_info: dict):
-        config_info = self._convert_to_serializable(config_info)
-        with open(self.analysis_dir / "config.json", "w") as f:
-            json.dump(config_info, f, indent=2)
+    def save_config(self, config: Dict):
+        """Save configuration"""
+        # Convert numpy types to Python basic types before saving
+        config = self._convert_to_serializable(config)
+        with open(self.analysis_dir / "config.json", "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
 
     def save_metrics(self, metrics: dict):
+        """Save metrics"""
         metrics = self._convert_to_serializable(metrics)
-        with open(self.analysis_dir / "metrics.json", "w") as f:
-            json.dump(metrics, f, indent=2)
+        with open(self.analysis_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2, ensure_ascii=False)
 
-    def save_predictions(self, predictions: list):
+    def save_predictions(self, predictions: List[Dict]):
+        """Save predictions"""
         predictions = self._convert_to_serializable(predictions)
-        df = pd.DataFrame(predictions)
-        df.to_csv(self.analysis_dir / "predictions.csv", index=False)
+        with open(self.analysis_dir / "predictions.json", "w", encoding="utf-8") as f:
+            json.dump(predictions, f, indent=2, ensure_ascii=False)
 
     def save_classification_report(self, y_true: list, y_pred: list, labels: list):
         report = classification_report(y_true, y_pred, labels=labels)
         with open(self.analysis_dir / "classification_report.txt", "w") as f:
             f.write(report)
 
-    def save_confusion_matrix(self, y_true: list, y_pred: list, labels: list):
-        """Save confusion matrix using sklearn's ConfusionMatrixDisplay"""
+    def save_confusion_matrix(self, true_labels, pred_labels, class_names):
+        """Save confusion matrix visualization"""
         # Create figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
         
         # Plot raw counts
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
+        cm = confusion_matrix(true_labels, pred_labels)
         disp = ConfusionMatrixDisplay(
             confusion_matrix=cm,
-            display_labels=labels
+            display_labels=class_names
         )
         disp.plot(
             ax=ax1,
@@ -77,11 +82,11 @@ class MetricsManager:
         
         # Plot normalized values
         cm_normalized = confusion_matrix(
-            y_true, y_pred, labels=labels, normalize='true'
+            true_labels, pred_labels, normalize='true'
         )
         disp_norm = ConfusionMatrixDisplay(
             confusion_matrix=cm_normalized,
-            display_labels=labels
+            display_labels=class_names
         )
         disp_norm.plot(
             ax=ax2,
@@ -91,5 +96,9 @@ class MetricsManager:
         ax2.set_title('Confusion Matrix (Normalized)')
         
         plt.tight_layout()
-        plt.savefig(self.analysis_dir / "confusion_matrix.png", dpi=300, bbox_inches='tight')
-        plt.close() 
+        plt.savefig(self.analysis_dir / "confusion_matrix.png")
+        plt.close()
+
+        # Save raw confusion matrix data
+        with open(self.analysis_dir / "confusion_matrix.txt", "w", encoding="utf-8") as f:
+            np.savetxt(f, cm, fmt="%d") 

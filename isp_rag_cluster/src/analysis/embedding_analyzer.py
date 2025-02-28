@@ -1,3 +1,8 @@
+import os
+# Set OpenMP environment variables to avoid conflicts
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'  # Intel OpenMP 충돌 방지
+os.environ['OMP_NUM_THREADS'] = '1'  # OpenMP 스레드 수 제한
+
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
@@ -17,45 +22,69 @@ from collections import Counter
 import json
 import umap
 from tqdm import tqdm
+from .deep_clustering import DeepEmbeddedClustering as DEC  # DEC 클래스 import
+from sklearn.metrics import confusion_matrix
+import shutil
+from hydra.core.hydra_config import HydraConfig
 
 class EmbeddingAnalyzer:
     def __init__(self, cfg):
+        # OpenMP 설정 추가
+        if os.name != 'nt':  # Windows가 아닌 경우
+            os.environ['OPENBLAS_NUM_THREADS'] = '1'
+            os.environ['MKL_NUM_THREADS'] = '1'
+            os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+            os.environ['NUMEXPR_NUM_THREADS'] = '1'
+        
         self.cfg = cfg
         #self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.results_dir = Path(cfg.general.outputs) / "embedding_analysis" 
         self.results_dir.mkdir(parents=True, exist_ok=True)
         
     def analyze(self, embeddings: np.ndarray, labels: List[str]):
-        """임베딩 분석 수행"""
+        """Analyze embeddings using selected method"""
         if self.cfg.analysis.embedding.method == "traditional":
-            # 기존 방식: 차원 축소 + 클러스터링
+            # Traditional 방식: 차원 축소 + 클러스터링
+            print("\nPerforming dimensionality reduction...")
             reduced_data = self._reduce_dimensions(embeddings)
+            
+            print("\nPerforming clustering...")
             clustering_results = self._perform_clustering(reduced_data, labels)
-        else:  # dec
-            # DEC 방식
-            from .deep_clustering import DeepEmbeddedClustering
-            dec = DeepEmbeddedClustering(self.cfg, input_dim=embeddings.shape[1])
             
-            # 사전 학습
-            print("Pretraining autoencoder...")
-            dec.pretrain(embeddings)
+            # 결과 저장
+            self._save_results(reduced_data, clustering_results, labels)
+            return clustering_results
+        elif self.cfg.analysis.embedding.method == "dec":
+            # DEC 초기화 및 학습
+            dec = DEC(
+                input_dim=embeddings.shape[1],
+                n_clusters=len(set(labels)),
+                encoder_dims=self.cfg.analysis.embedding.dec.hidden_dims,
+                pretrain_epochs=self.cfg.analysis.embedding.dec.pretrain_epochs,
+                clustering_epochs=self.cfg.analysis.embedding.dec.clustering_epochs,
+                batch_size=self.cfg.analysis.embedding.dec.batch_size,
+                update_interval=self.cfg.analysis.embedding.dec.update_interval,
+                tol=self.cfg.analysis.embedding.dec.tol,
+                learning_rate=self.cfg.analysis.embedding.dec.learning_rate
+            )
             
-            # 클러스터링
-            print("\nPerforming deep clustering...")
-            best_k = self._find_best_k_for_dec(dec, embeddings, labels)
-            dec_results = dec.cluster(embeddings, best_k)
+            # 학습 및 클러스터링
+            print("\nTraining DEC model...")
+            cluster_labels = dec.fit_predict(embeddings)
             
-            # 결과 변환
-            reduced_data = dec_results["latent_features"]
-            clustering_results = self._evaluate_dec_results(
-                dec_results["cluster_labels"], 
-                labels, 
-                best_k
+            # 결과 평가
+            results = self._evaluate_dec_results(
+                embeddings, cluster_labels, labels, 
+                len(set(labels))
             )
         
         # 결과 저장
-        self._save_results(reduced_data, clustering_results, labels)
-        return clustering_results
+            reduced_data = dec.encoder.predict(embeddings)  # 인코더로 차원 축소
+            self._save_results(reduced_data, results, labels)
+            
+            return results
+        else:
+            raise ValueError(f"Unknown method: {self.cfg.analysis.embedding.method}")
         
     def _reduce_dimensions(self, embeddings: np.ndarray) -> np.ndarray:
         """차원 축소 수행"""
@@ -85,12 +114,20 @@ class EmbeddingAnalyzer:
             },
             "best_k": None,
             "best_score": 0.0,
-            "clustering_type": self.cfg.analysis.embedding.traditional.clustering.type
+            "clustering_type": "traditional",
+            "cluster_labels": None,  # 클러스터 레이블 추가
+            "best_k_criterion": {    # best_k_criterion 추가
+                "type": "extrinsic",
+                "metric": "normalized_mutual_info"
+            }
         }
         
         k_range = self.cfg.analysis.embedding.traditional.clustering.k_range
         
         # 클러스터링 수행
+        best_score = -np.inf
+        best_labels = None
+        
         for k in k_range:
             if self.cfg.analysis.embedding.traditional.clustering.type == "kmeans":
                 clusterer = KMeans(
@@ -108,75 +145,31 @@ class EmbeddingAnalyzer:
             cluster_labels = clusterer.fit_predict(data)
             
             # 내부 평가
-            intrinsic_scores = {
+            results["metrics"]["intrinsic"][k] = {
                 "silhouette": silhouette_score(data, cluster_labels),
                 "calinski_harabasz": calinski_harabasz_score(data, cluster_labels),
                 "davies_bouldin_inverted": -davies_bouldin_score(data, cluster_labels)
             }
             
             # 외부 평가
-            extrinsic_scores = {
+            results["metrics"]["extrinsic"][k] = {
                 "adjusted_rand": adjusted_rand_score(true_labels, cluster_labels),
                 "normalized_mutual_info": normalized_mutual_info_score(true_labels, cluster_labels)
             }
             
-            results["metrics"]["intrinsic"][k] = intrinsic_scores
-            results["metrics"]["extrinsic"][k] = extrinsic_scores
+            # 최고 점수 갱신
+            current_score = results["metrics"]["extrinsic"][k]["normalized_mutual_info"]
+            if current_score > best_score:
+                best_score = current_score
+                best_labels = cluster_labels
+                results["best_k"] = k
+                results["best_score"] = current_score
+        
+        # 최종 클러스터 레이블 저장
+        results["cluster_labels"] = best_labels
         
         # Knee/Elbow 포인트 찾기
         results["knee_points"] = self._find_knee_points(results["metrics"])
-        
-        # 설정에서 best k 선택 기준 가져오기
-        criterion = self.cfg.analysis.embedding.traditional.clustering.best_k_criterion
-        metric_type = criterion.type
-        metric_name = criterion.metric
-        
-        if metric_type == "combined":
-            # 모든 메트릭의 정규화된 평균 계산
-            combined_scores = []
-            for k in k_range:
-                # 내부 메트릭 정규화 및 평균
-                intrinsic_scores = []
-                for name, score in results["metrics"]["intrinsic"][k].items():
-                    values = [results["metrics"]["intrinsic"][k2][name] for k2 in k_range]
-                    if name == "davies_bouldin_inverted":
-                        normalized = (score - min(values)) / (max(values) - min(values))
-                    else:
-                        normalized = (score - min(values)) / (max(values) - min(values))
-                    intrinsic_scores.append(normalized)
-                
-                # 외부 메트릭 정규화 및 평균
-                extrinsic_scores = []
-                for name, score in results["metrics"]["extrinsic"][k].items():
-                    values = [results["metrics"]["extrinsic"][k2][name] for k2 in k_range]
-                    normalized = (score - min(values)) / (max(values) - min(values))
-                    extrinsic_scores.append(normalized)
-                
-                # 전체 평균 계산
-                combined_score = (np.mean(intrinsic_scores) + np.mean(extrinsic_scores)) / 2
-                combined_scores.append(combined_score)
-            
-            best_k_idx = np.argmax(combined_scores)
-            results["best_k"] = list(k_range)[best_k_idx]
-            results["best_score"] = combined_scores[best_k_idx]
-            
-        else:
-            # 기존 로직 (단일 메트릭 기반)
-            scores = [scores[metric_name] 
-                     for scores in results["metrics"][metric_type].values()]
-            
-            if metric_name == "davies_bouldin_inverted":
-                best_k_idx = np.argmin(scores)
-            else:
-                best_k_idx = np.argmax(scores)
-            
-            results["best_k"] = list(k_range)[best_k_idx]
-            results["best_score"] = scores[best_k_idx]
-        
-        results["best_k_criterion"] = {
-            "type": metric_type,
-            "metric": metric_name
-        }
         
         return results
     
@@ -223,85 +216,70 @@ class EmbeddingAnalyzer:
         return knee_points
 
     def _save_results(self, reduced_data: np.ndarray, clustering_results: Dict[str, Any], true_labels: List[str]):
-        # 시각화 설정
-        viz_cfg = self.cfg.analysis.embedding.visualization
+        """결과 저장"""
+        # Save config by copying hydra config
+        from hydra.core.hydra_config import HydraConfig
         
-        # 최적의 k로 클러스터링
-        best_k = clustering_results["best_k"]
+        # Create config directory
+        config_dir = self.results_dir / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
         
-        # 클러스터링 수행
-        if self.cfg.analysis.embedding.traditional.clustering.type == "kmeans":
-            clusterer = KMeans(
-                n_clusters=best_k,
-                n_init=self.cfg.analysis.embedding.traditional.clustering.kmeans.n_init,
-                random_state=self.cfg.analysis.embedding.traditional.clustering.kmeans.random_state
+        # Get hydra config info
+        hydra_config = HydraConfig.get()
+        config_name = hydra_config.job.config_name  # 실제 사용된 config 파일 이름 가져오기
+        
+        # Get source config files from hydra output directory
+        hydra_output_dir = Path(hydra_config.runtime.output_dir)
+        
+        # Copy the actual config file being used
+        config_files = [
+            (f"{config_name}.yaml", f"{config_name}.yaml"),  # 메인 config 파일
+            (".hydra/hydra.yaml", "hydra.yaml"),             # hydra config
+            (".hydra/overrides.yaml", "overrides.yaml")      # override 설정
+        ]
+        
+        for src_name, dst_name in config_files:
+            src_path = hydra_output_dir / src_name
+            if src_path.exists():
+                dst_path = config_dir / dst_name
+                print(f"Copying config file: {src_path} -> {dst_path}")
+                shutil.copy2(src_path, dst_path)
+            else:
+                print(f"Warning: Config file not found: {src_path}")
+
+        # Save clustering summary
+        summary = {
+            "best_k": int(clustering_results["best_k"]),
+            "knee_points": self._convert_to_serializable(clustering_results.get("knee_points", {})),
+            "best_scores": {
+                "intrinsic": self._convert_to_serializable(clustering_results["metrics"]["intrinsic"]),
+                "extrinsic": self._convert_to_serializable(clustering_results["metrics"]["extrinsic"])
+            }
+        }
+        
+        with open(self.results_dir / "clustering_summary.json", "w") as f:
+            json.dump(summary, f, indent=2)
+
+        # Plot clustering results
+        if clustering_results["clustering_type"] == "traditional":
+            self._plot_metrics(
+                clustering_results["metrics"],
+                clustering_results.get("knee_points", {})
             )
-        else:  # gmm
-            clusterer = GaussianMixture(
-                n_components=best_k,
-                covariance_type=self.cfg.analysis.embedding.traditional.clustering.gmm.covariance_type,
-                random_state=self.cfg.analysis.embedding.traditional.clustering.gmm.random_state
-            )
         
-        cluster_labels = clusterer.fit_predict(reduced_data)
+        # Plot cluster visualization for both methods
+        self._plot_clusters_2d(
+            reduced_data, 
+            clustering_results["cluster_labels"],
+            true_labels,
+            "Clustering Results"
+        )
         
-        # 1. 3개의 서브플롯 생성
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
-        
-        # Emotion class별 scatter plot
-        unique_emotions = sorted(set(true_labels))
-        colors = plt.cm.Set2(np.linspace(0, 1, len(unique_emotions)))  # Set2 팔레트 사용
-        for emotion, color in zip(unique_emotions, colors):
-            mask = np.array(true_labels) == emotion
-            ax1.scatter(reduced_data[mask, 0], reduced_data[mask, 1], 
-                       c=[color], label=emotion, 
-                       alpha=viz_cfg.scatter.alpha)
-        ax1.set_title('Emotion Classes')
-        ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        # Clustering 결과 scatter plot
-        scatter = ax2.scatter(reduced_data[:, 0], reduced_data[:, 1], 
-                            c=cluster_labels, 
-                            cmap=viz_cfg.scatter.cmap,
-                            alpha=viz_cfg.scatter.alpha)
-        ax2.set_title(f'Clustering Results (k={best_k})')
-        legend1 = ax2.legend(*scatter.legend_elements(),
-                           title="Clusters",
-                           bbox_to_anchor=(1.05, 1), 
-                           loc='upper left')
-        ax2.add_artist(legend1)
-        
-        # Cluster-Class 관계 heatmap
-        confusion_matrix = np.zeros((len(unique_emotions), best_k))
-        for i, emotion in enumerate(unique_emotions):
-            for j in range(best_k):
-                mask = (np.array(true_labels) == emotion) & (cluster_labels == j)
-                confusion_matrix[i, j] = mask.sum()
-        
-        # 정규화
-        confusion_matrix = confusion_matrix / confusion_matrix.sum(axis=1, keepdims=True)
-        
-        sns.heatmap(confusion_matrix, 
-                   xticklabels=[f'C{i}' for i in range(best_k)],
-                   yticklabels=unique_emotions,
-                   annot=True, 
-                   fmt=viz_cfg.heatmap.fmt,
-                   cmap=viz_cfg.heatmap.cmap,
-                   ax=ax3,
-                   cbar_kws={'label': 'Normalized Count'})
-        ax3.set_title('Cluster-Class Relationship')
-        
-        plt.tight_layout()
-        plt.savefig(self.results_dir / "clustering_analysis.png", 
-                    bbox_inches='tight', dpi=300)
-        plt.close()
-        
-        # 2. 메트릭 변화 시각화 (knee points 포함)
-        self._plot_metrics(clustering_results["metrics"], 
-                         clustering_results["knee_points"])
-        
-        # 수치 결과 저장
-        self._save_numerical_results(clustering_results)
+        # Plot both confusion matrix and class-cluster agreement
+        self._plot_confusion_matrices(
+            true_labels,
+            clustering_results["cluster_labels"]
+        )
 
     def _convert_to_serializable(self, obj):
         """numpy 타입을 Python 기본 타입으로 변환"""
@@ -374,9 +352,34 @@ class EmbeddingAnalyzer:
         with open(self.results_dir / "clustering_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
 
+    def _plot_dec_metrics(self, metrics: Dict[str, Dict[int, Dict[str, float]]], best_k: int):
+        """DEC 메트릭 시각화"""
+        plt.figure(figsize=(10, 6))
+        
+        # Plot intrinsic and extrinsic metrics as bar charts
+        metric_types = ["intrinsic", "extrinsic"]
+        n_metrics = len(metric_types)
+        
+        for i, metric_type in enumerate(metric_types):
+            plt.subplot(1, 2, i+1)
+            metric_values = metrics[metric_type][best_k]
+            
+            # Create bar plot
+            plt.bar(range(len(metric_values)), 
+                    list(metric_values.values()),
+                    tick_label=list(metric_values.keys()))
+            
+            plt.title(f'{metric_type.capitalize()} Metrics')
+            plt.xticks(rotation=45)
+            plt.ylabel('Score')
+        
+        plt.tight_layout()
+        plt.savefig(self.results_dir / "dec_metrics.png")
+        plt.close()
+
     def _plot_metrics(self, metrics: Dict[str, Dict[int, Dict[str, float]]], 
                       knee_points: Dict[str, float]):
-        """메트릭 변화 시각화"""
+        """메트릭 변화 시각화 (traditional method only)"""
         # 개별 메트릭 그룹 플롯
         self._plot_metric_group(
             metrics["intrinsic"], 
@@ -431,6 +434,14 @@ class EmbeddingAnalyzer:
         plt.savefig(self.results_dir / "metrics_comparison.png")
         plt.close()
 
+    def _normalize_values(self, values):
+        """안전한 정규화 수행"""
+        min_val = np.min(values)
+        max_val = np.max(values)
+        if max_val == min_val:
+            return np.ones_like(values)  # 모든 값이 같으면 1로 정규화
+        return (values - min_val) / (max_val - min_val)
+
     def _plot_metric_group(self, metrics: Dict[int, Dict[str, float]], 
                           title: str, filename: str, knee_point: float = None):
         """메트릭 그룹별 시각화"""
@@ -439,7 +450,7 @@ class EmbeddingAnalyzer:
         # 데이터 정규화 및 플로팅
         for metric_name in metrics[list(metrics.keys())[0]].keys():
             values = [metrics[k][metric_name] for k in metrics.keys()]
-            normalized_values = (values - np.min(values)) / (np.max(values) - np.min(values))
+            normalized_values = self._normalize_values(values)
             plt.plot(list(metrics.keys()), normalized_values, 
                     marker='o', label=metric_name)
         
@@ -452,60 +463,110 @@ class EmbeddingAnalyzer:
         plt.savefig(self.results_dir / filename)
         plt.close()
 
-    def _find_best_k_for_dec(self, dec: 'DeepEmbeddedClustering', data: np.ndarray, labels: List[str]) -> int:
-        """DEC를 위한 최적의 k 찾기"""
-        k_range = self.cfg.analysis.embedding.traditional.clustering.k_range
-        scores = []
-        
-        # 잠재 특징 추출
-        latent_features = dec.extract_features(data)
-        
-        print("\nFinding best k for DEC...")
-        for k in tqdm(k_range, desc="Testing k values"):
-            # k-means로 클러스터링
-            kmeans = KMeans(n_clusters=k, n_init=20, random_state=42)
-            cluster_labels = kmeans.fit_predict(latent_features)
-            
-            # 평가 메트릭 계산
-            silhouette = silhouette_score(latent_features, cluster_labels)
-            nmi = normalized_mutual_info_score(labels, cluster_labels)
-            
-            # 정규화된 점수의 평균
-            combined_score = (silhouette + nmi) / 2
-            scores.append(combined_score)
-        
-        # 최고 점수의 k 선택
-        best_k_idx = np.argmax(scores)
-        best_k = k_range[best_k_idx]
-        
-        print(f"\nBest k for DEC: {best_k} (Score: {scores[best_k_idx]:.4f})")
-        return best_k
-
-    def _evaluate_dec_results(self, cluster_labels: np.ndarray, true_labels: List[str], best_k: int) -> Dict[str, Any]:
+    def _evaluate_dec_results(self, embeddings: np.ndarray, cluster_labels: np.ndarray, 
+                         true_labels: List[str], n_clusters: int) -> Dict[str, Any]:
         """DEC 결과 평가"""
         results = {
-            "metrics": {
-                "intrinsic": {},
-                "extrinsic": {}
+            "clustering_type": "dec",
+            "best_k": n_clusters,
+            "cluster_labels": cluster_labels,
+            "best_k_criterion": {
+                "type": "fixed",
+                "metric": "n_classes"
             },
-            "best_k": best_k,
-            "best_score": 0.0,
-            "clustering_type": "dec"
+            "metrics": {
+                "intrinsic": {
+                    "silhouette": silhouette_score(embeddings, cluster_labels),
+                    "calinski_harabasz": calinski_harabasz_score(embeddings, cluster_labels),
+                    "davies_bouldin_inverted": -davies_bouldin_score(embeddings, cluster_labels)
+                },
+                "extrinsic": {
+                    "adjusted_rand": adjusted_rand_score(true_labels, cluster_labels),
+                    "normalized_mutual_info": normalized_mutual_info_score(true_labels, cluster_labels)
+                }
+            }
         }
         
-        # 메트릭 계산
-        results["metrics"]["intrinsic"][best_k] = {
-            "silhouette": silhouette_score(data, cluster_labels),
-            "calinski_harabasz": calinski_harabasz_score(data, cluster_labels),
-            "davies_bouldin_inverted": -davies_bouldin_score(data, cluster_labels)
-        }
+        # Best score for DEC is NMI
+        results["best_score"] = results["metrics"]["extrinsic"]["normalized_mutual_info"]
         
-        results["metrics"]["extrinsic"][best_k] = {
-            "adjusted_rand": adjusted_rand_score(true_labels, cluster_labels),
-            "normalized_mutual_info": normalized_mutual_info_score(true_labels, cluster_labels)
-        }
+        return results
+
+    def _convert_labels_to_emotions(self, labels):
+        """라벨을 감정 이름으로 변환"""
+        emotion_classes = self.cfg.emotions.classes
         
-        # 최고 점수 저장
-        results["best_score"] = results["metrics"]["extrinsic"][best_k]["normalized_mutual_info"]
+        # 이미 감정 이름이면 그대로 반환
+        if isinstance(labels[0], str) and labels[0] in emotion_classes:
+            return labels
         
-        return results 
+        # 숫자를 0-based index로 변환 후 감정 이름으로 매핑
+        return [emotion_classes[int(label) - 1] for label in labels]
+
+    def _plot_clusters_2d(self, data_2d: np.ndarray, cluster_labels: np.ndarray, 
+                         true_labels: List[str], title: str):
+        """2D 클러스터링 결과 시각화"""
+        plt.figure(figsize=(12, 5))
+        
+        # Plot predicted clusters
+        plt.subplot(121)
+        scatter = plt.scatter(data_2d[:, 0], data_2d[:, 1], 
+                             c=cluster_labels, 
+                             cmap=self.cfg.analysis.embedding.visualization.scatter.cmap,
+                             alpha=self.cfg.analysis.embedding.visualization.scatter.alpha)
+        plt.title(f"{title} (Predicted)")
+        plt.colorbar(scatter, label="Cluster")
+        
+        # Plot true labels
+        plt.subplot(122)
+        emotion_classes = self.cfg.emotions.classes
+        true_emotions = self._convert_labels_to_emotions(true_labels)
+        
+        # 감정 이름을 숫자로 매핑
+        emotion_to_int = {emotion: i for i, emotion in enumerate(emotion_classes)}
+        true_labels_int = [emotion_to_int[emotion] for emotion in true_emotions]
+        
+        scatter = plt.scatter(data_2d[:, 0], data_2d[:, 1], 
+                             c=true_labels_int,
+                             cmap=self.cfg.analysis.embedding.visualization.scatter.cmap,
+                             alpha=self.cfg.analysis.embedding.visualization.scatter.alpha)
+        plt.title(f"{title} (True Classes)")
+        plt.colorbar(scatter, ticks=range(len(emotion_classes)), 
+                    label="Emotion Classes").set_ticklabels(emotion_classes)
+        
+        plt.tight_layout()
+        plt.savefig(self.results_dir / "clustering_visualization.png")
+        plt.close()
+
+    def _plot_confusion_matrices(self, true_labels: List[str], pred_labels: np.ndarray):
+        """클래스-클러스터 일치도 시각화"""
+        emotion_classes = self.cfg.emotions.classes
+        true_emotions = self._convert_labels_to_emotions(true_labels)
+        unique_clusters = sorted(list(set(pred_labels)))
+        
+        # Class-Cluster Agreement Matrix
+        agreement_matrix = np.zeros((len(emotion_classes), len(unique_clusters)))
+        
+        # Calculate class-cluster distribution
+        for i, emotion in enumerate(emotion_classes):
+            for j, cluster in enumerate(unique_clusters):
+                agreement_matrix[i, j] = np.sum(
+                    (np.array(true_emotions) == emotion) & (pred_labels == cluster)
+                )
+        
+        # Normalize by column
+        agreement_matrix = agreement_matrix / agreement_matrix.sum(axis=0, keepdims=True)
+        
+        plt.figure(figsize=(12, 8))
+        sns.heatmap(agreement_matrix,
+                    annot=True,
+                    fmt='.2f',
+                    cmap=self.cfg.analysis.embedding.visualization.heatmap.cmap,
+                    xticklabels=[f'Cluster {i}' for i in range(len(unique_clusters))],
+                    yticklabels=emotion_classes)
+        plt.title('Class-Cluster Agreement')
+        plt.ylabel('Emotion Class')
+        plt.xlabel('Cluster')
+        plt.tight_layout()
+        plt.savefig(self.results_dir / "class_cluster_agreement.png")
+        plt.close() 

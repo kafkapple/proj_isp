@@ -1,4 +1,3 @@
-import os
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -6,10 +5,9 @@ from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig
 
-import requests
 from langchain_core.embeddings import Embeddings
 from typing import List
-
+0
 from src.data.data_manager import DataManager
 from src.models.retriever import Retriever
 from src.models.generator import Generator
@@ -18,6 +16,7 @@ from src.evaluation.evaluator import Evaluator
 from openai import OpenAI
 from src.utils.path_manager import get_vector_store_path
 from hydra.utils import get_original_cwd
+from src.utils.lmstudio_utils import get_lmstudio_model_info
 
 # Load environment variables from .env file
 load_dotenv()
@@ -86,25 +85,52 @@ class EmotionAnalyzer:
         
         # Initialize vector store path only if RAG is enabled
         if cfg.model.use_rag:
-            # 절대 경로로 변환
             self.index_path = Path(get_original_cwd()) / get_vector_store_path(cfg)
-            # Initialize retriever
-            self.retriever = self._initialize_retriever(train_df)
+            print(f"\nVector store path: {self.index_path}")
+            
+            # Get embedding model info
+            if cfg.model.provider == "lmstudio":
+                embedding_model_info = get_lmstudio_model_info(
+                    base_url=cfg.model.lmstudio.base_url,
+                    api_key=cfg.model.lmstudio.api_key,
+                    model_type="embedding"
+                )
+            else:  # openai
+                embedding_model_info = {
+                    "provider": "openai",
+                    "model": cfg.model.openai.embedding_model
+                }
+            
+            # Initialize retriever with embedding model info
+            self.retriever = self._initialize_retriever(train_df, embedding_model_info)
         
-        # Initialize generator
-        self.generator = Generator(cfg)
+        # Get chat model info
+        if cfg.model.provider == "lmstudio":
+            chat_model_info = get_lmstudio_model_info(
+                base_url=cfg.model.lmstudio.base_url,
+                api_key=cfg.model.lmstudio.api_key,
+                model_type="chat"
+            )
+        else:  # openai
+            chat_model_info = {
+                "provider": "openai",
+                "model": cfg.model.openai.chat_model_name
+            }
+        
+        # Initialize generator with chat model info
+        self.generator = Generator(cfg, chat_model_info)
         
         # Store model information
         self.model_info = {
             "provider": cfg.model.provider,
             "use_rag": cfg.model.use_rag,
-            "embedding": self.retriever.embeddings.model_info if cfg.model.use_rag else None,
-            "chat_model": self.generator.get_model_info()
+            "embedding": embedding_model_info if cfg.model.use_rag else None,
+            "chat_model": chat_model_info
         }
         
         self._print_debug_info()
     
-    def _initialize_retriever(self, train_df) -> Retriever:
+    def _initialize_retriever(self, train_df, embedding_model_info) -> Retriever:
         """Initialize retriever with vector store management"""
         retriever = Retriever(train_df, self.cfg)
         
@@ -112,13 +138,20 @@ class EmotionAnalyzer:
         expected_path = self.index_path
         print(f"\nChecking vector store at {expected_path}")
         
-        if expected_path.exists():
-            print(f"\nLoading existing vector store from {expected_path}")
-            retriever.load_vector_store(expected_path)
-        else:
-            print(f"\nCreating new vector store at {expected_path}")
+        try:
+            if expected_path.exists():
+                print(f"\nLoading existing vector store from {expected_path}")
+                retriever.load_vector_store(expected_path)
+            else:
+                print(f"\nCreating new vector store at {expected_path}")
+                retriever.create_vector_store()  # 먼저 생성
+                print(f"Saving vector store to {expected_path}")
+                retriever.save_vector_store(expected_path)  # 그 다음 저장
+        except Exception as e:
+            print(f"Error with vector store: {e}")
+            print("Creating new vector store...")
             retriever.create_vector_store()
-            print(f"Saving vector store to {expected_path}")
+            print("Saving vector store...")
             retriever.save_vector_store(expected_path)
             
         return retriever
@@ -133,17 +166,17 @@ class EmotionAnalyzer:
             # Get embedding model info only if RAG is enabled
             if self.model_info['use_rag']:
                 embedding_info = self.model_info['embedding']
-                if isinstance(embedding_info.get('model', {}), dict):
-                    print(f"Embedding model: {embedding_info['model'].get('id', 'unknown')}")
-                else:
-                    print(f"Embedding model: {embedding_info.get('model', 'unknown')}")
+                if self.cfg.model.provider == "lmstudio":
+                    print(f"Embedding model: {embedding_info.get('id', 'unknown')}")
+                else:  # openai
+                    print(f"Embedding model: {embedding_info['model']}")
             
             # Get chat model info
             chat_model = self.model_info['chat_model']
-            if isinstance(chat_model, dict) and 'model' in chat_model:
-                print(f"Chat model: {chat_model['model'].get('id', 'unknown')}\n")
-            else:
-                print(f"Chat model: {chat_model}\n")
+            if self.cfg.model.provider == "lmstudio":
+                print(f"Chat model: {chat_model.get('id', 'unknown')}\n")
+            else:  # openai
+                print(f"Chat model: {chat_model['model']}\n")
 
     def analyze_emotion(self, text: str) -> str:
         if self.cfg.model.use_rag:
@@ -158,16 +191,25 @@ class EmotionAnalyzer:
     def embedding_info(self) -> dict:
         """Return embedding model information"""
         if self.cfg.model.use_rag:
-            return self.model_info["embedding"]
-        return {
-            "provider": self.cfg.model.provider,
-            "model": self.cfg.model.lmstudio.embedding_model if self.cfg.model.provider == "lmstudio" else None
-        }
+            if self.cfg.model.provider == "lmstudio":
+                return self.retriever.embeddings.model_info
+            else:  # openai
+                return {
+                    "provider": "openai",
+                    "model": self.cfg.model.openai.embedding_model
+                }
+        return None
 
     @property
     def chat_model_info(self) -> dict:
         """Return chat model information"""
-        return self.model_info["chat_model"]
+        if self.cfg.model.provider == "lmstudio":
+            return self.generator.get_model_info()
+        else:  # openai
+            return {
+                "provider": "openai",
+                "model": self.cfg.model.openai.chat_model_name
+            }
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
 def main(cfg: DictConfig):

@@ -32,3 +32,5 @@ dependencies:
       - umap-learn
       - seaborn
       - omegaconf
+      - tensorflow
+      - tf-keras

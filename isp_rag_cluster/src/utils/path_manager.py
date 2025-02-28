@@ -1,37 +1,42 @@
 from pathlib import Path
 from .lmstudio_utils import get_lmstudio_model_info
+import json
+from datetime import datetime
 
 def get_vector_store_path(cfg) -> Path:
     """Get vector store path with detailed information"""
     vector_store_path = Path("vector_store")
     
-    # Get embedding model info and name
+    # Get embedding model name based on provider
     if cfg.model.provider == "openai":
-        # OpenAI의 경우 config에 설정된 모델명 사용
         model_name = cfg.model.openai.embedding_model
-    elif cfg.model.provider == "lmstudio":
-        # LMStudio의 경우 실제 로드된 모델 ID 사용
+    else:  # lmstudio
         model_info = get_lmstudio_model_info(
             base_url=cfg.model.lmstudio.base_url,
-            api_key=cfg.model.lmstudio.api_key
+            api_key=cfg.model.lmstudio.api_key,
+            model_type="embedding"
         )
-        model_name = model_info.get("id", "unknown")
-    else:
-        # 기타 provider의 경우 기본 embedding 모델명 사용
-        model_name = cfg.model.embeddings.default_model
-        
-    # Create path with detailed information
-    path_components = [
-        cfg.data.name,  # Dataset name
-        "all" if cfg.data.n_samples == -1 else f"n{cfg.data.n_samples}",  # "all" for full dataset
-        cfg.model.provider,  # Provider
-        model_name.replace('/', '_')  # Model name (cleaned)
-    ]
+        model_name = model_info.get("id", cfg.model.lmstudio.embedding_model)
     
-    # Print debug info
-    print(f"\nVector store path components: {path_components}")
-    path = vector_store_path / "_".join(path_components)
-    print(f"Full vector store path: {path}")
-    print(f"Path exists: {path.exists()}")
+    # Create path
+    path = vector_store_path / "_".join([
+        cfg.data.name,
+        "all" if cfg.data.n_samples == -1 else f"n{cfg.data.n_samples}",
+        cfg.model.provider,
+        model_name.replace('/', '_')
+    ])
+    
+    # Save metadata (single source of truth)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "dataset": cfg.data.name,
+            "samples": "all" if cfg.data.n_samples == -1 else f"n{cfg.data.n_samples}",
+            "provider": cfg.model.provider,
+            "embedding_model": model_name,
+            "created_at": datetime.now().isoformat()
+        }
+        with open(path / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
     
     return path 
