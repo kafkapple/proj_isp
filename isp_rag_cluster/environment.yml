@@ -31,3 +31,5 @@ dependencies:
     - tf-keras
     - python-dotenv
     - ollama
+    - langchain-ollama
+    - anthropic
