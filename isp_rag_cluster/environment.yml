@@ -33,3 +33,4 @@ dependencies:
     - ollama
     - langchain-ollama
     - anthropic
+    - tabulate
