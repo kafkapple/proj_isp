@@ -18,31 +18,34 @@ class EmotionRAG:
         # 감정 분석 특화 RAG 템플릿 정의
         self.emotion_template = """You are an expert in emotion analysis. Your task is to analyze the emotional content of the given text based on similar examples and your knowledge.
 
-## Similar Examples for Reference:
-{examples}
+        <Examples>
+        ## Similar Examples for Reference:
+        {examples}
+        </Examples>
 
-## Current Text to Analyze:
-{query}
+        <Text to Analyze>
+        Text: {query}
+        </Text to Analyze>
 
-## Instructions:
-1. Consider the context from similar examples above
-2. Analyze the emotional content of the current text
-3. Classify the emotion STRICTLY as one of: {labels}
-4. NO OTHER EMOTIONS are allowed
+        ## Instructions:
+        1. Consider the context from similar examples above
+        2. Analyze the emotional content of the current text
+        3. Classify the emotion STRICTLY as one of: {labels}
+        4. NO OTHER EMOTIONS are allowed
 
-## Guidelines:
-- Focus on the dominant emotion
-- Use similar examples as reference points
-- Consider emotional intensity and context
-- Be consistent with example classifications
+        ## Guidelines:
+        - Focus on the dominant emotion
+        - Use similar examples as reference points
+        - Consider emotional intensity and context
+        - Be consistent with example classifications
 
-## Response Format:
-Provide your analysis in JSON format with these fields:
-- emotion: (must be one of the specified labels)
-- confidence_score: (between 0.0 and 1.0)
-- explanation: (brief reasoning based on similar examples and context)
+        ## Response Format:
+        Provide your analysis in JSON format with these fields:
+        - emotion: (must be one of the specified labels)
+        - confidence_score: (between 0.0 and 1.0)
+        - explanation: (brief reasoning based on similar examples and context)
 
-Return ONLY the JSON response without any additional text or formatting."""
+        Return ONLY the JSON response without any additional text or formatting."""
         
         self.prompt_template = PromptTemplate(
             input_variables=["examples", "query", "labels"],

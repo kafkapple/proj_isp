@@ -4,7 +4,7 @@ import pandas as pd
 import json
 import re
 from ollama import chat, ChatResponse
-from anthropic import Anthropic  # Anthropic 패키지 추가
+from anthropic import Anthropic  # Import Anthropic package
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -23,55 +23,81 @@ from rag import EmotionRAG
 import logging
 import sys
 from typing import Dict, Any
-from langchain_community.embeddings import HuggingFaceEmbeddings  # 새로운 임포트 경로
+from langchain_community.embeddings import HuggingFaceEmbeddings  # New import path
 import codecs
 
+# Add global flag for prompt logging
+_PROMPT_LOGGED = False
+_INPUT_LOGGED = False  # 새로 추가
+
 def save_metrics(df, cfg, model_name, output_dir):
-    # 데이터 전처리
-    print("\nData preprocessing stats before:")
+    """Save prediction statistics and metrics"""
+    print("\nData preprocessing statistics (before):")
     print(f"Total samples: {len(df)}")
     print(f"Missing values:\n{df.isna().sum()}")
     print(f"Duplicates: {df.duplicated().sum()}")
     
-    # 감정 라벨 소문자로 변환
+    # Convert emotion labels to lowercase
     df['emotion'] = df['emotion'].str.lower()
     df[f'predicted_emotion_{model_name}'] = df[f'predicted_emotion_{model_name}'].str.lower()
     
-    # 결측치와 중복 제거
+    # Remove missing values and duplicates
     df = df.dropna(subset=['emotion', f'predicted_emotion_{model_name}'])
     df = df.drop_duplicates()
     
-    print("\nData preprocessing stats after:")
-    print(f"Total samples: {len(df)}")
-    print(f"Missing values:\n{df.isna().sum()}")
-    print(f"Duplicates: {df.duplicated().sum()}")
+    # Use label list defined in config (convert ListConfig to regular list)
+    labels = list(cfg.data.datasets[cfg.data.name].labels)
+    default_emotion = str(cfg.data.default_emotion)
     
-    # NaN 값을 default_emotion으로 채우기
-    default_emotion = cfg.data.default_emotion
+    # Get unique predicted labels
+    predicted_labels = df[f'predicted_emotion_{model_name}'].unique()
     
-    # config에서 정의된 라벨 목록 사용
-    labels = cfg.data.datasets[cfg.data.name].labels
+    # Find invalid predictions (not in defined labels)
+    invalid_predictions = df[~df[f'predicted_emotion_{model_name}'].isin(labels)]
     
-    # 매핑 딕셔너리 생성
-    mapping_dict = {
-        'unknown': default_emotion,
-        'indifference': default_emotion,
-        'confusion': default_emotion,
+    # Create invalid predictions statistics
+    invalid_stats = {
+        "total_samples": len(df),
+        "invalid_count": len(invalid_predictions),
+        "invalid_percentage": (len(invalid_predictions) / len(df)) * 100 if len(df) > 0 else 0,
+        "invalid_labels": [label for label in predicted_labels if label not in labels],
+        "samples": []
     }
     
-    # 실제 라벨과 예측 라벨 추출하고 문자열로 변환
-    y_true = df['emotion'].fillna(default_emotion).astype(str)
-    y_pred = df[f'predicted_emotion_{model_name}'].fillna(default_emotion).astype(str)
+    # Add detailed information for each invalid prediction
+    for _, row in invalid_predictions.iterrows():
+        invalid_stats["samples"].append({
+            "text": row['text'],
+            "true_emotion": row['emotion'],
+            "predicted_emotion": row[f'predicted_emotion_{model_name}'],
+            "confidence_score": row.get(f'confidence_score_{model_name}', None),
+            "explanation": row.get(f'explanation_{model_name}', None)
+        })
     
-    # 예측 라벨을 config의 라벨로 매핑
-    y_pred = y_pred.map(lambda x: mapping_dict.get(x, x) if x not in labels else x)
+    # Save invalid predictions statistics
+    invalid_file = output_dir / f'invalid_predictions_{model_name}.json'
+    with open(invalid_file, 'w', encoding='utf-8') as f:
+        json.dump(invalid_stats, f, indent=2, ensure_ascii=False)
     
-    print(f"\nLabels information:")
-    print(f"Config labels: {labels}")
-    print(f"Unique values in true labels: {y_true.unique()}")
-    print(f"Unique values in predicted labels after mapping: {y_pred.unique()}")
+    # Select only valid samples (predictions in defined labels)
+    valid_samples = df[df[f'predicted_emotion_{model_name}'].isin(labels)]
     
-    # 분류 보고서 생성 (zero_division=0 추가)
+    print("\nPrediction validation statistics:")
+    print(f"Total samples: {len(df)}")
+    print(f"Valid predictions: {len(valid_samples)}")
+    print(f"Invalid predictions: {len(invalid_predictions)}")
+    print(f"Invalid labels found: {invalid_stats['invalid_labels']}")
+    
+    # Extract actual and predicted labels for valid samples only
+    y_true = valid_samples['emotion']
+    y_pred = valid_samples[f'predicted_emotion_{model_name}']
+    
+    print(f"\nLabel information:")
+    print(f"Defined labels: {labels}")
+    print(f"Actual label unique values: {y_true.unique()}")
+    print(f"Predicted label unique values (valid only): {y_pred.unique()}")
+    
+    # Generate classification report for valid samples
     report_dict = classification_report(y_true, y_pred, 
                                       labels=labels,
                                       output_dict=True, 
@@ -80,43 +106,41 @@ def save_metrics(df, cfg, model_name, output_dir):
                                      labels=labels,
                                      zero_division=0)
     
-    # 분류 보고서 텍스트 파일로 저장
-    with open(output_dir / f'classification_report_{model_name}.txt', "w") as file:
+    # Save classification report as text file
+    with open(output_dir / f'classification_report_{model_name}.txt', "w", encoding='utf-8') as file:
+        file.write(f"Total samples: {len(df)}\n")
+        file.write(f"Valid samples: {len(valid_samples)}\n")
+        file.write(f"Invalid predictions: {len(invalid_predictions)}\n")
+        file.write(f"Invalid labels found: {', '.join(invalid_stats['invalid_labels'])}\n\n")
+        file.write("=== Classification Report (Valid Samples Only) ===\n")
         file.write(report_str)
     
-    # Classification Report를 DataFrame으로 변환하여 CSV로 저장
-    report_df = pd.DataFrame(report_dict).transpose()
-    report_df.to_csv(output_dir / f'classification_report_{model_name}.csv')
-    
-    # 혼동 행렬 계산 (명시적으로 라벨 지정)
-    cm = confusion_matrix(y_true, y_pred, labels=labels)
-    cm_normalized = confusion_matrix(y_true, y_pred, labels=labels, normalize='true')
-    
-    # 결과 저장을 위한 경로 설정
-    
-    metrics_path = output_dir / f'metrics_{model_name}.json'
-    
-    # 메트릭 결과 저장
+    # Save metrics result
     metrics_result = {
         "overall": {
-            "accuracy": report_dict.get('accuracy', 0.0),
+            "accuracy": float(report_dict['accuracy']),
             "macro_avg": report_dict.get('macro avg', {}),
             "weighted_avg": report_dict.get('weighted avg', {})
         },
         "per_class": {
             label: report_dict[label] for label in report_dict.keys()
             if label not in ['accuracy', 'macro avg', 'weighted avg']
+        },
+        "invalid_predictions_info": {
+            "total": len(invalid_predictions),
+            "percentage": (len(invalid_predictions) / len(df)) * 100 if len(df) > 0 else 0,
+            "invalid_labels": invalid_stats['invalid_labels']
         }
     }
     
-    # JSON 파일로 저장
-    with open(metrics_path, 'w') as f:
-        json.dump(metrics_result, f, indent=2)
-        
-    # 두 개의 subplot으로 혼동 행렬 시각화
+    # Calculate confusion matrix for valid samples only
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+    cm_normalized = confusion_matrix(y_true, y_pred, labels=labels, normalize='true')
+    
+    # Plot confusion matrix in two subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 10))
     
-    # 원본 혼동 행렬
+    # Original confusion matrix
     sns.heatmap(cm, 
                 annot=True, 
                 fmt='d', 
@@ -124,11 +148,11 @@ def save_metrics(df, cfg, model_name, output_dir):
                 xticklabels=labels,
                 yticklabels=labels,
                 ax=ax1)
-    ax1.set_title(f'Confusion Matrix - {model_name}')
+    ax1.set_title(f'Confusion Matrix - {model_name}\n(Valid samples only: {len(valid_samples)})')
     ax1.set_ylabel('True Label')
     ax1.set_xlabel('Predicted Label')
     
-    # 정규화된 혼동 행렬
+    # Normalized confusion matrix
     sns.heatmap(cm_normalized, 
                 annot=True, 
                 fmt='.2f', 
@@ -136,19 +160,12 @@ def save_metrics(df, cfg, model_name, output_dir):
                 xticklabels=labels,
                 yticklabels=labels,
                 ax=ax2)
-    ax2.set_title(f'Normalized Confusion Matrix - {model_name}')
+    ax2.set_title(f'Normalized Confusion Matrix - {model_name}\n(Valid samples only: {len(valid_samples)})')
     ax2.set_ylabel('True Label')
     ax2.set_xlabel('Predicted Label')
     
-    # 두 subplot 모두에 대해 라벨 회전 및 정렬 조정
-    for ax in [ax1, ax2]:
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
-    
-    # 그래프가 잘리지 않도록 레이아웃 조정
+    # Adjust layout and save
     plt.tight_layout()
-    
-    # 더 높은 해상도로 저장
     plt.savefig(output_dir / f'confusion_matrix_{model_name}.png', 
                 bbox_inches='tight',
                 dpi=300)
@@ -157,7 +174,7 @@ def save_metrics(df, cfg, model_name, output_dir):
     return metrics_result, cm
 
 def map_unknown_emotion(emotion: str, labels: list, mapping_dict: dict = None, cfg: dict = None) -> str:
-    """알 수 없는 감정을 매핑"""
+    """Map unknown emotion"""
     if mapping_dict is None:
         mapping_dict = {
             'happy': 'joy',
@@ -178,58 +195,80 @@ def map_unknown_emotion(emotion: str, labels: list, mapping_dict: dict = None, c
         }
     
     mapped_emotion = mapping_dict.get(emotion.lower(), cfg.data.default_emotion)
-    print(f"Mapping emotion: {emotion} -> {mapped_emotion}")  # 매핑 로그 추가
+    print(f"Mapping emotion: {emotion} -> {mapped_emotion}")  # Add mapping log
     return mapped_emotion
 
 def retry_emotion_prediction(text: str, labels: list, client, model: str, temperature: float, seed: int) -> dict:
-    """감정 재예측 시도"""
-    # 더 명확한 프롬프트와 제약조건 추가
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": f"Strictly classify the emotion as one of these ONLY: {', '.join(labels)}",
-            "parameters": {
-                "properties": {
-                    "emotion": {
-                        "type": "string",
-                        "enum": labels,  # 가능한 값을 명시적으로 제한
-                        "description": f"Must be one of: {', '.join(labels)}"
-                    },
-                    "confidence_score": {
-                        "type": "number",
-                        "description": "confidence score of the emotion: 0.0-1.0"
-                    },
-                    "explanation": {
-                        "type": "string",
-                        "description": "explain why the emotion is decided"
-                    },
-                },
-                "required": ["emotion", "confidence_score", "explanation"]
-            }
-        }
-    }]
-
+    """Retry emotion prediction attempt"""
+    # 특정 모델들은 function calling을 지원하지 않음
+    no_function_call_models = [
+        "hf.co/tensorblock/emotion-llama-gguf",
+        "sebdg/emotional_llama",
+        "deepseek-r1"
+    ]
+    
+    use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
+    
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": f"You MUST classify the emotion as one of these ONLY: {', '.join(labels)}. Do not use any other emotion words."},
-                {"role": "user", "content": text}
-            ],
-            tools=tools,
-            seed=seed,
-            temperature=temperature,
-            timeout=10
-        )
-        
-        if response.choices[0].message.tool_calls:
-            tool_call = response.choices[0].message.tool_calls[0]
-            return json.loads(tool_call.function.arguments)
+        if use_function_call:
+            tools = [{
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": f"Strictly classify the emotion as one of these ONLY: {', '.join(labels)}",
+                    "parameters": {
+                        "properties": {
+                            "emotion": {
+                                "type": "string",
+                                "enum": labels,
+                                "description": f"Must be one of: {', '.join(labels)}"
+                            },
+                            "confidence_score": {
+                                "type": "number",
+                                "description": "confidence score of the emotion: 0.0-1.0"
+                            },
+                            "explanation": {
+                                "type": "string",
+                                "description": "explain why the emotion is decided"
+                            },
+                        },
+                        "required": ["emotion", "confidence_score", "explanation"]
+                    }
+                }
+            }]
+            
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": f"You MUST classify the emotion as one of these ONLY: {', '.join(labels)}. Do not use any other emotion words."},
+                    {"role": "user", "content": text}
+                ],
+                tools=tools,
+                seed=seed,
+                temperature=temperature,
+                timeout=10
+            )
+            
+            if response.choices[0].message.tool_calls:
+                tool_call = response.choices[0].message.tool_calls[0]
+                return json.loads(tool_call.function.arguments)
+        else:
+            # Function calling을 지원하지 않는 모델을 위한 일반 응답
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": f"You MUST classify the emotion as one of these ONLY: {', '.join(labels)}. Do not use any other emotion words."},
+                    {"role": "user", "content": text}
+                ],
+                temperature=temperature,
+                timeout=10
+            )
+            return clean_json_response(response.choices[0].message.content)
+            
     except Exception as e:
         print(f"Error in retry prediction: {e}")
     
-    return {"emotion": "sadness", "confidence_score": 0.5, "explanation": "Failed to get valid prediction"}
+    return {"emotion": "unknown", "confidence_score": 0.0, "explanation": "Failed to get valid prediction"}
 
 def load_data(cfg):
     dataset_cfg = cfg.data.datasets[cfg.data.name]
@@ -253,8 +292,6 @@ def load_data(cfg):
     df.rename(columns={'SIT': 'text', 'EMOT': 'emotion'}, inplace=True)
     df['emotion'] = df['emotion'].map(lambda x: labels[int(x)-1] if x.isdigit() else 'undefined')
     
-    #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
     def preprocess_text(text):
         if not isinstance(text, str):
             return text
@@ -262,34 +299,39 @@ def load_data(cfg):
         text = text.lower()
         return text
     
-    print("\nData preprocessing stats before:")
-    print(f"Total samples: {len(df)}")
-    print(f"Missing values:\n{df.isna().sum()}")
-    print(f"Duplicates: {df.duplicated().sum()}")
+    # Log message construction
+    log_messages = []
+    log_messages.append("\nData preprocessing stats before:")
+    log_messages.append(f"Total samples: {len(df)}")
+    log_messages.append(f"Missing values:\n{df.isna().sum()}")
+    log_messages.append(f"Duplicates: {df.duplicated().sum()}")
     
-    # 결측치 데이터 저장
+    # Create subfolder for saving data-related files
+    data_dir = Path(cfg.general.output_path) / "data_stats"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Save missing data
     missing_data = df[df.isna().any(axis=1)].copy()
     if not missing_data.empty:
         missing_data['removal_reason'] = 'missing_value'
         missing_data['status'] = 'removed'
-        missing_data.to_csv(Path(cfg.general.output_path) / f'missing_data.csv', index=True)
-        print(f"\nSaved {len(missing_data)} rows with missing values")
+        missing_data.to_csv(data_dir / 'missing_data.csv', index=True)
+        log_messages.append(f"\nSaved {len(missing_data)} rows with missing values")
     
-    # 결측치 제거
+    # Remove missing values
     df_no_missing = df.dropna()
     
-    # 텍스트 전처리 적용
+    # Apply text preprocessing
     df_no_missing['text'] = df_no_missing['text'].apply(preprocess_text)
     
-    # exclude_phrases 처리
+    # exclude_phrases processing
     excluded_rows = pd.DataFrame()
     if cfg.data.exclude_phrases:
         exclude_phrases = list(cfg.data.exclude_phrases)
         original_len = len(df_no_missing)
         
-        # 제외될 행들을 미리 저장
+        # Save rows to exclude in advance
         for phrase in exclude_phrases:
-            # 텍스트 길이가 exclude_length 미만인 경우에만 필터링
             matched_rows = df_no_missing[
                 (df_no_missing['text'].str.contains(phrase, case=False, na=False)) & 
                 (df_no_missing['text'].str.len() < cfg.data.exclude_length)
@@ -300,7 +342,7 @@ def load_data(cfg):
                 matched_rows['status'] = 'removed'
                 excluded_rows = pd.concat([excluded_rows, matched_rows])
         
-        # 제외 구문 포함된 행 제거 (길이 조건 포함)
+        # Remove rows containing excluded phrases (including length condition)
         for phrase in exclude_phrases:
             df_no_missing = df_no_missing[
                 ~((df_no_missing['text'].str.contains(phrase, case=False, na=False)) & 
@@ -308,37 +350,37 @@ def load_data(cfg):
             ]
         
         filtered_len = len(df_no_missing)
-        print(f"\nRemoved {original_len - filtered_len} rows containing excluded phrases (length < {cfg.data.exclude_length})")
+        log_messages.append(f"\nRemoved {original_len - filtered_len} rows containing excluded phrases (length < {cfg.data.exclude_length})")
         
-        # 제외된 행 저장
+        # Save excluded rows
         if not excluded_rows.empty:
-            excluded_rows.to_csv(Path(cfg.general.output_path) / f'excluded_phrases_data.csv', index=True)
-            print(f"Saved {len(excluded_rows)} rows containing excluded phrases")
+            excluded_rows.to_csv(data_dir / 'excluded_phrases_data.csv', index=True)
+            log_messages.append(f"Saved {len(excluded_rows)} rows containing excluded phrases")
     
-    # 중복 데이터 처리
+    # Duplicate data processing
     duplicates_all = df_no_missing[df_no_missing.duplicated(subset=['text'], keep=False)].copy()
     if not duplicates_all.empty:
-        # 중복 데이터에 그룹 ID 추가
+        # Add group ID to duplicate data
         duplicates_all['duplicate_group'] = duplicates_all.groupby('text').ngroup()
         
-        # 각 그룹의 첫 번째 항목은 유지되고 나머지는 제거됨을 표시
+        # Only first item in each group is kept, others are marked for removal
         duplicates_all['status'] = 'removed'
         duplicates_all.loc[~duplicates_all.duplicated(subset=['text'], keep='first'), 'status'] = 'kept'
         
-        # duplicate_group으로 정렬하고, 같은 그룹 내에서는 status로 정렬 (kept가 먼저 오도록)
+        # Sort by duplicate_group and then by status (kept comes first)
         duplicates_all = duplicates_all.sort_values(['duplicate_group', 'status'], 
                                                   ascending=[True, True])
         
-        # 중복 데이터 저장 (유지된 것과 제거된 것 모두)
-        duplicates_all.to_csv(Path(cfg.general.output_path) / f'duplicate_data.csv', index=True)
-        print(f"\nSaved {len(duplicates_all)} rows of duplicate data (including kept and removed)")
-        print(f"- Kept: {len(duplicates_all[duplicates_all['status'] == 'kept'])} rows")
-        print(f"- Removed: {len(duplicates_all[duplicates_all['status'] == 'removed'])} rows")
+        # Save duplicate data (both kept and removed)
+        duplicates_all.to_csv(data_dir / 'duplicate_data.csv', index=True)
+        log_messages.append(f"\nSaved {len(duplicates_all)} rows of duplicate data (including kept and removed)")
+        log_messages.append(f"- Kept: {len(duplicates_all[duplicates_all['status'] == 'kept'])} rows")
+        log_messages.append(f"- Removed: {len(duplicates_all[duplicates_all['status'] == 'removed'])} rows")
     
-    # 중복 제거 (첫 번째 항목 유지)
+    # Remove duplicates (keep first item)
     df_final = df_no_missing.drop_duplicates(subset=['text'], keep='first')
     
-    # 감정 클래스별 통계 계산
+    # Calculate emotion class statistics
     emotion_stats = {}
     for emotion in labels:
         initial_count = len(df[df['emotion'] == emotion])
@@ -356,7 +398,7 @@ def load_data(cfg):
             'removal_percentage': ((initial_count - final_count) / initial_count * 100) if initial_count > 0 else 0
         }
     
-    # 제거된 데이터 통계 저장
+    # Save removed data statistics
     removal_stats = {
         'total_initial_samples': len(df),
         'total_final_samples': len(df_final),
@@ -371,57 +413,118 @@ def load_data(cfg):
         'emotion_class_stats': emotion_stats
     }
     
-    with open(Path(cfg.general.output_path) / f'removal_stats.json', 'w', encoding='utf-8') as f:
+    with open(data_dir / 'removal_stats.json', 'w', encoding='utf-8') as f:
         json.dump(removal_stats, f, indent=2, ensure_ascii=False)
     
-    print("\nData preprocessing stats after:")
-    print(f"Total samples: {len(df_final)}")
-    print(f"Total removed samples:")
-    print(f"- Missing values: {len(missing_data)}")
-    print(f"- Excluded phrases: {len(excluded_rows)}")
-    print(f"- Duplicates: {len(duplicates_all[duplicates_all['status'] == 'removed']) if not duplicates_all.empty else 0}")
-    print("\nEmotion class statistics:")
+    log_messages.append("\nData preprocessing stats after:")
+    log_messages.append(f"Total samples: {len(df_final)}")
+    log_messages.append(f"Total removed samples:")
+    log_messages.append(f"- Missing values: {len(missing_data)}")
+    log_messages.append(f"- Excluded phrases: {len(excluded_rows)}")
+    log_messages.append(f"- Duplicates: {len(duplicates_all[duplicates_all['status'] == 'removed']) if not duplicates_all.empty else 0}")
+    log_messages.append("\nEmotion class statistics:")
     for emotion, stats in emotion_stats.items():
-        print(f"\n{emotion}:")
-        print(f"- Initial count: {stats['initial_count']}")
-        print(f"- Excluded: {stats['excluded_count']}")
-        print(f"- Duplicates removed: {stats['duplicates_removed']}")
-        print(f"- Final count: {stats['final_count']}")
-        print(f"- Removal percentage: {stats['removal_percentage']:.2f}%")
+        log_messages.append(f"\n{emotion}:")
+        log_messages.append(f"- Initial count: {stats['initial_count']}")
+        log_messages.append(f"- Excluded: {stats['excluded_count']}")
+        log_messages.append(f"- Duplicates removed: {stats['duplicates_removed']}")
+        log_messages.append(f"- Final count: {stats['final_count']}")
+        log_messages.append(f"- Removal percentage: {stats['removal_percentage']:.2f}%")
+    
+    # Combine log messages into a single string
+    log_message = "\n".join(log_messages)
+    
+    # Log to file (assuming logger is set up after main function is called)
+    if 'logger' in globals():
+        safe_log(logger, 'info', log_message)
+    else:
+        print(log_message)
     
     return df_final, labels
 
 def clean_json_response(response_text: str) -> str:
-    """JSON 응답 정리"""
+    """Clean JSON response"""
     try:
-        print("\nRaw response:", repr(response_text))  # 실제 응답 확인
+        print("\nRaw response:", repr(response_text))
         
-        # 1. 코드 블록 제거
-        if "```" in response_text:
-            pattern = r"```(?:json)?(.*?)```"
-            matches = re.findall(pattern, response_text, re.DOTALL)
-            if matches:
-                response_text = matches[0]
-                print("After code block removal:", repr(response_text))
-        
-        # 2. JSON 블록 찾기
-        json_start = response_text.find('{')
-        json_end = response_text.rfind('}') + 1
-        
-        if json_start == -1 or json_end <= json_start:
-            raise ValueError("No valid JSON found in response")
+        # 응답이 단순 문자열인 경우 처리
+        if isinstance(response_text, str):
+            # 공백 제거 및 소문자 변환
+            response_text = response_text.strip().lower()
             
-        json_text = response_text[json_start:json_end]
+            # 감정 단어 추출 시도
+            emotion_pattern = r'emotion:\s*(\w+)'
+            emotion_match = re.search(emotion_pattern, response_text)
+            
+            if emotion_match:
+                emotion = emotion_match.group(1).lower()
+                return json.dumps({
+                    "emotion": emotion,
+                    "confidence_score": 0.5,
+                    "explanation": "Emotion extracted from text response"
+                }, ensure_ascii=False)
+            
+            # JSON 형식이 아닌 단순 단어인 경우
+            if not (response_text.startswith('{') or response_text.startswith('[')):
+                # 기본 JSON 형식으로 변환
+                return json.dumps({
+                    "emotion": response_text,
+                    "confidence_score": 0.5,
+                    "explanation": "Direct word response converted to JSON"
+                }, ensure_ascii=False)
+        
+        # 1. Find JSON block
+        json_pattern = r'\{[^{}]*\}'
+        matches = re.findall(json_pattern, response_text, re.DOTALL)
+        
+        if not matches:
+            raise ValueError("No JSON object found in response")
+            
+        json_text = matches[-1]  # Take the last JSON object if multiple found
         print("Extracted JSON:", repr(json_text))
         
-        # 3. 모든 공백 문자 정리 (더 강력한 방식)
-        # 먼저 모든 공백 문자를 일반 공백으로 변환
-        json_text = re.sub(r'[\n\r\t\s]+', ' ', json_text)
-        print("After whitespace cleanup:", repr(json_text))
+        # 2. Clean and standardize JSON format
+        # Remove whitespace and newlines
+        json_text = re.sub(r'[\n\r\t\s]+', ' ', json_text.strip())
         
-        # 4. JSON 파싱 및 재직렬화
+        # Fix property names (add double quotes)
+        json_text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_text)
+        
+        # Handle nested quotes in string values
+        def fix_string_value(match):
+            value = match.group(1)
+            # Escape any existing double quotes
+            value = value.replace('"', '\\"')
+            # Replace single quotes with double quotes
+            value = value.replace("'", "'")
+            return f'"{value}"'
+        
+        # Fix string values (add double quotes and handle escaping)
+        json_text = re.sub(r':\s*"([^"]*)"', lambda m: f':{fix_string_value(m)}', json_text)
+        json_text = re.sub(r':\s*\'([^\']*)\'', lambda m: f':{fix_string_value(m)}', json_text)
+        json_text = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}])', r':"\1"\2', json_text)
+        
+        print("After cleanup:", repr(json_text))
+        
+        # 3. Validate and re-serialize JSON
         parsed = json.loads(json_text)
-        final_json = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+        
+        # Ensure required fields are present
+        required_fields = ["emotion", "confidence_score", "explanation"]
+        if not all(field in parsed for field in required_fields):
+            # 필수 필드가 없는 경우 기본값으로 채움
+            if "emotion" not in parsed:
+                parsed["emotion"] = "unknown"
+            if "confidence_score" not in parsed:
+                parsed["confidence_score"] = 0.5
+            if "explanation" not in parsed:
+                parsed["explanation"] = "Incomplete JSON response"
+            
+        # Ensure confidence_score is a number
+        if not isinstance(parsed["confidence_score"], (int, float)):
+            parsed["confidence_score"] = float(parsed["confidence_score"])
+            
+        final_json = json.dumps(parsed, ensure_ascii=False)
         print("Final JSON:", repr(final_json))
         
         return final_json
@@ -429,62 +532,114 @@ def clean_json_response(response_text: str) -> str:
     except Exception as e:
         print(f"Error in clean_json_response: {e}")
         print(f"Original response: {response_text}")
-        raise
+        
+        # 에러 발생 시 단순 문자열 응답 처리 시도
+        try:
+            # 응답에서 감정 단어 추출 시도
+            emotion_pattern = r'emotion:\s*(\w+)'
+            emotion_match = re.search(emotion_pattern, str(response_text), re.IGNORECASE)
+            
+            if emotion_match:
+                emotion = emotion_match.group(1).lower()
+                return json.dumps({
+                    "emotion": emotion,
+                    "confidence_score": 0.5,
+                    "explanation": "Extracted from text response"
+                }, ensure_ascii=False)
+                
+            # 응답에서 알파벳 문자열만 추출
+            word_match = re.search(r'[a-zA-Z]+', str(response_text))
+            if word_match:
+                emotion_word = word_match.group(0).lower()
+                return json.dumps({
+                    "emotion": emotion_word,
+                    "confidence_score": 0.5,
+                    "explanation": "Extracted from non-JSON response"
+                }, ensure_ascii=False)
+        except:
+            pass
+        
+        # 모든 처리 실패 시 기본값 반환
+        return json.dumps({
+            "emotion": "unknown",
+            "confidence_score": 0.0,
+            "explanation": f"Failed to parse response: {str(e)}"
+        }, ensure_ascii=False)
+
+def validate_prompt_template(template: str) -> bool:
+    """Validate prompt template format"""
+    required_sections = ['Emotion Definitions', 'Output Format']
+    return all(section in template for section in required_sections)
 
 def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, llm=None, logger=None, rag=None, tools=None) -> dict:
-    """모델 타입에 따라 적절한 응답 방식 선택"""
+    """Get model response with RAG or template"""
+    global _PROMPT_LOGGED  # 전역 변수 선언 추가
+    
     try:
-        # 먼저 template 정의
-        if cfg.model.use_template:
-            model_key = model.lower()
-            template = cfg.prompt.get(model_key)
-            if not template:
-                if logger:
-                    logger.info(f"No specific template found for model {model_key}, using default template")
-                template = cfg.prompt.emotion_fewshot
-        else:
-            template = cfg.prompt.emotion
-
-        # RAG 또는 일반 프롬프트 생성
         if cfg.model.use_rag and rag:
+            # RAG 사용 시
             similar_examples = rag.get_similar_examples(text, k=cfg.rag.k_examples)
-            prompt_template = str(rag.get_rag_prompt(text, similar_examples))
+            final_prompt = str(rag.get_rag_prompt(text, similar_examples))
             if logger:
-                safe_log(logger, 'debug', f"RAG prompt: {prompt_template}")
+                logger.debug(f"Using RAG prompt with {cfg.rag.k_examples} examples")
+        elif cfg.model.use_template:
+            # Template 사용 시
+            template_name = cfg.model.template
+            template = getattr(cfg.prompt, template_name)
+            final_prompt = f"{template}\n\nText: {text}"
+            if logger:
+                logger.debug(f"Using template: {template_name}")
         else:
-            prompt_template = f"""{template}
-
-Text: {text}
-
-IMPORTANT: Return ONLY a single-line JSON object without any formatting."""
-
+            # 둘 다 사용하지 않을 때
+            final_prompt = f"Classify the emotion in this text as one of: {', '.join(labels)}\n\nText: {text}"
         if logger:
-            safe_log(logger, 'debug', f"Raw prompt: {prompt_template}")
+                logger.debug("Using basic prompt")
+
+        # Log complete prompt only once with actual input
+        if logger and not _PROMPT_LOGGED:
+            log_separator = "="*80
+            input_log = f"""
+{log_separator}
+[Initial Sample] Complete Prompt with Input
+{log_separator}
+{final_prompt}
+{log_separator}
+"""
+            safe_log(logger, 'info', input_log)
+            _PROMPT_LOGGED = True
 
         try:
             if cfg.model.type == "ollama":
-                response = llm.invoke(prompt_template)
+                response = llm.invoke(final_prompt)
             elif cfg.model.type == "anthropic":
                 response = client.messages.create(
                     model=model,
-                    max_tokens=1000,
+                    max_tokens=cfg.model.max_tokens,
                     messages=[
                         {
                             "role": "user",
-                            "content": f"{template}\n\nText: {text}"
+                            "content": final_prompt
                         }
                     ],
                     temperature=temperature
                 )
                 response = response.content[0].text
             else:
-                # OpenAI, Upstage 등은 chat completion 사용
+                # OpenAI, Upstage, etc. use chat completion
                 messages = [
-                    {"role": "system", "content": template},
-                    {"role": "user", "content": text}
+                    {"role": "system", "content": final_prompt}
                 ]
                 
-                if cfg.model.function_calling and cfg.model.type != "ollama":
+                # 특정 모델들은 function calling을 지원하지 않음
+                no_function_call_models = [
+                    "hf.co/tensorblock/emotion-llama-gguf",
+                    "sebdg/emotional_llama",
+                    "deepseek-r1"
+                ]
+                
+                use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
+                
+                if use_function_call:
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
@@ -492,7 +647,7 @@ IMPORTANT: Return ONLY a single-line JSON object without any formatting."""
                         tools=tools,
                         seed=int(cfg.general.seed)
                     )
-                    # Function calling 응답 처리
+                    # Function calling response handling
                     if response.choices[0].message.tool_calls:
                         tool_call = response.choices[0].message.tool_calls[0]
                         result = json.loads(tool_call.function.arguments)
@@ -500,7 +655,7 @@ IMPORTANT: Return ONLY a single-line JSON object without any formatting."""
                             logger.debug(f"Function call result: {result}")
                         return result
                 else:
-                    # 일반 응답
+                    # General response without function calling
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
@@ -508,38 +663,52 @@ IMPORTANT: Return ONLY a single-line JSON object without any formatting."""
                     )
                 response = response.choices[0].message.content
 
-            if logger:
-                safe_log(logger, 'debug', f"Raw response: {response}")
-
-            # JSON 파싱
+            # JSON parsing
             result = clean_json_response(response)
             if isinstance(result, str):
                 result = json.loads(result)
 
-            if logger:
-                safe_log(logger, 'info', f"Processed response: {result}")
+            # 파싱된 결과가 필수 필드를 포함하는지 확인
+            required_fields = ["emotion", "confidence_score", "explanation"]
+            if not all(field in result for field in required_fields):
+                if logger:
+                    logger.warning("Missing required fields in response, retrying with structured prompt...")
+                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
+
+            if result["emotion"] not in labels:
+                if logger:
+                    logger.warning(f"Invalid emotion label '{result['emotion']}', retrying with structured prompt...")
+                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
+
             return result
+
+        except json.JSONDecodeError:
+            if logger:
+                logger.warning("JSON parsing failed, retrying with structured prompt...")
+            # JSON 파싱 실패 시 retry
+            return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
 
         except Exception as e:
             if logger:
-                safe_log(logger, 'error', f"Error generating response: {e}")
+                logger.error(f"Error generating response: {e}")
             raise
 
     except Exception as e:
         if logger:
-            safe_log(logger, 'error', f"Error in get_model_response: {e}")
-        raise
+            logger.error(f"Error in get_model_response: {e}")
+        # 최종 실패 시 retry
+        return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
 
 def get_prompt(cfg, text: str, labels: list, model_name: str) -> str:
-    """프롬프트 템플릿 선택 및 생성"""
+    """Select and generate prompt template"""
     if cfg.model.use_template:
-        # 모델 이름에 따라 프롬프트 선택
+        # Select prompt based on model name
         if 'llama' in model_name.lower():
             template = cfg.prompt.llama
         elif 'qwen' in model_name.lower():
             template = cfg.prompt.qwen
         else:
-            # 기본 프롬프트
+            # Default prompt
             template = cfg.prompt.target_prompt
         return template
     else:
@@ -550,17 +719,17 @@ Text: {text}
 Provide your analysis in a structured format."""
 
 def save_prompt_response(text: str, prompt, response: dict, output_dir: Path, index: int):
-    """프롬프트와 응답을 로그로 저장"""
-    # output_dir 내부에 logs 폴더 생성
+    """Save prompt and response as log"""
+    # Create logs folder inside output_dir
     log_dir = output_dir / "logs"
     log_dir.mkdir(exist_ok=True)
     
-    # 프롬프트 객체를 문자열로 변환
+    # Convert prompt object to string
     if hasattr(prompt, 'partial_variables'):
-        # RAG 프롬프트의 경우
+        # For RAG prompt
         prompt_str = prompt.partial_variables.get('context', str(prompt))
     else:
-        # 일반 프롬프트의 경우
+        # For general prompt
         prompt_str = str(prompt)
     
     log_entry = {
@@ -575,25 +744,25 @@ def save_prompt_response(text: str, prompt, response: dict, output_dir: Path, in
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
 def format_prompt_for_display(prompt, text):
-    """프롬프트를 보기 좋게 포맷팅"""
+    """Format prompt for better readability"""
     output = "\n" + "="*50 + "\n"
     output += "📝 PROMPT DETAILS\n" + "="*50 + "\n\n"
     
-    # 입력 텍스트
+    # Input text
     output += "📌 Input Text:\n"
     output += f"{text}\n\n"
     
-    # RAG 컨텍스트가 있는 경우
+    # If RAG context is present
     if hasattr(prompt, 'partial_variables') and 'context' in prompt.partial_variables:
         context = prompt.partial_variables['context']
         
-        # 유사 예제 추출
+        # Extract similar examples
         if "Similar examples for reference:" in context:
             output += "🔍 Similar Examples:\n"
             examples = context.split("Similar examples for reference:\n")[1].split("\nRemember")[0]
             output += f"{examples}\n"
         
-        # 지침 추출
+        # Extract guidelines
         if "Remember to:" in context:
             output += "📋 Guidelines:\n"
             guidelines = context.split("Remember to:")[1].split("Format your response")[0]
@@ -632,7 +801,7 @@ class SafeStreamHandler(logging.StreamHandler):
                         self.stream.write(safe_msg)
                         self.stream.write(self.terminator)
                     self.flush()
-                except:
+                except Exception:
                     safe_msg = msg.encode('ascii', errors='replace').decode('ascii')
                     sys.stderr.write(safe_msg + self.terminator)
                     self.flush()
@@ -640,37 +809,37 @@ class SafeStreamHandler(logging.StreamHandler):
             self.handleError(record)
 
 def setup_logging(cfg, output_dir: Path):
-    """로깅 설정"""
-    # 로그 디렉토리 생성
+    """Logging setup"""
+    # Create log directory
     log_dir = output_dir / cfg.general.logging.log_path
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # 로그 파일 경로
+    # Log file path
     log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-    # 로거 설정
+    # Logger setup
     logger = logging.getLogger('emotion_analysis')
     logger.setLevel(logging.DEBUG)
 
-    # 기존 핸들러 제거
+    # Remove existing handlers
     logger.handlers.clear()
 
-    # Windows 환경에서 UTF-8 출력을 위한 설정
+    # Windows environment setup for UTF-8 output
     if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
 
     try:
-        # 파일 핸들러 설정
+        # File handler setup
         log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')
         file_handler.setLevel(logging.DEBUG)
 
-        # 콘솔 핸들러 설정
+        # Console handler setup
         console_handler = SafeStreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)  # INFO 레벨로 제한
+        console_handler.setLevel(logging.INFO)  # Limit to INFO level
         
-        # 포맷터 설정
+        # Formatter setup
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
@@ -680,7 +849,7 @@ def setup_logging(cfg, output_dir: Path):
 
     except Exception as e:
         print(f"Error setting up logging: {e}")
-        # 기본 콘솔 로거만 설정
+        # Default console logger setup
         console_handler = SafeStreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -690,41 +859,50 @@ def setup_logging(cfg, output_dir: Path):
     return logger
 
 def safe_log(logger, level: str, message: str):
-    """안전한 로깅 함수"""
+    """Safe logging function"""
     try:
+        # Convert non-string types to string
         if not isinstance(message, str):
             message = str(message)
         
-        # ASCII로 변환 (한글과 특수문자 제거)
+        # Convert special characters and Korean to ASCII (cannot convert characters with errors='ignore')
         message = message.encode('ascii', errors='ignore').decode('ascii')
-            
-        # 메시지 길이 제한
-        if len(message) > 1000:
-            message = message[:997] + "..."
         
-        getattr(logger, level)(message)
+        # Log message based on level
+        log_func = getattr(logger, level)
+        log_func(message)
             
     except Exception as e:
-        print(f"Logging error: {e}")
+        # Log failure fallback to default output
+        print(f"Logging failed: {str(e)}")
+        print(f"Original message: {message}")  # Print full message
 
 def get_output_dir_name(model_name: str, cfg) -> str:
-    """설정에 따른 출력 폴더명 생성"""
+    """Create output folder name based on settings"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name_parts = [timestamp, model_name]
     
-    # 각 설정이 True일 때만 이름에 추가
+    # Add template name if use_template is True
     if cfg.model.use_template:
-        name_parts.append("template")
+        template_name = str(cfg.model.template)
+        if isinstance(template_name, str) and template_name.startswith("${prompt."):
+            # Extract the actual template name from the reference
+            template_name = template_name.split("${prompt.")[1].rstrip("}")
+        name_parts.append(template_name)
+    
+    # Add RAG if enabled
     if cfg.model.use_rag:
         name_parts.append("rag")
+    
+    # Add function calling if enabled
     if cfg.model.function_calling:
         name_parts.append("function_calling")
     
     return "_".join(name_parts)
 
 def initialize_models(cfg):
-    """LLM과 RAG 모델 초기화"""
+    """Initialize LLM and RAG model"""
     llm = None
     rag = None
     
@@ -759,47 +937,58 @@ def initialize_models(cfg):
     return llm, rag
 
 def sanitize_model_name(model_name: str) -> str:
-    """모델 이름을 파일명으로 사용 가능하도록 정리"""
+    """Clean model name for use as file name"""
     return re.sub(r'[^\w\-\.]', '_', model_name.lower())
 
 @hydra.main(version_base="1.2", config_path='config', config_name='llm')
 def main(cfg):
-    # 모델 초기화를 메인 로직 시작 전에 수행
+    # 전역 변수 사용 선언
+    global _INPUT_LOGGED
+    
+    # Initialize models
     llm, rag = initialize_models(cfg)
     
-    # 모든 config 값들을 Python 기본 타입으로 변환
+    # Convert config values to Python basic types first
     model_type = str(cfg.model.type)
     model = str(cfg.model.name)
     temperature = float(cfg.model.temperature)
     
-    # 안전한 모델명 생성
+    # Set up output directory first
     model_name = sanitize_model_name(model)
     print(f"Using sanitized model name: {model_name}")
     
-    # 출력 디렉토리 설정
     output_dir_name = get_output_dir_name(model_name, cfg)
     output_dir = Path('outputs') / output_dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # cfg의 output_path 업데이트
+    # Update cfg output_path
     cfg.general.output_path = str(output_dir)
     
+    # Now setup logging with the created output directory
+    logger = setup_logging(cfg, output_dir)
     
-    # 데이터 로드 및 라벨 준비
+    # Get template based on model configuration
+    if cfg.model.use_template:
+        model_key = model.lower()
+        template = cfg.model_templates.get(model_key, cfg.prompt.template_default)
+    else:
+        template = cfg.prompt.emotion
+    
+    # 데이터 로딩 및 전처리
     df_isear, labels = load_data(cfg)
     labels = list(map(str, labels))
     
-    # n_samples 설정
+    # Set n_samples
     n_samples = len(df_isear) if cfg.data.n_samples == -1 else min(cfg.data.n_samples, len(df_isear))
     print(f"Processing {n_samples} samples out of {len(df_isear)} total samples")
     
-    # 처음 n_samples 개만 선택
+    # Select first n_samples
     df_isear = df_isear.head(n_samples)
     
-    # 출력 파일 경로 설정 (디렉토리는 이미 생성됨)
+    # Set output file path (directory already created)
     output_path = Path(cfg.general.output_path) / f'dataset-{cfg.data.name}_model-{model_name}.csv'
 
-    # 클라이언트 초기화
+    # Initialize client
     if model_type == "openai":
         base_url = "https://api.openai.com/v1"
         api_key = os.getenv("OPENAI_API_KEY")
@@ -830,7 +1019,7 @@ def main(cfg):
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Function calling 도구 정의
+    # Function calling tool definition
     tools = [
         {
             "type": "function",
@@ -841,7 +1030,7 @@ def main(cfg):
                     "properties": {
                         "emotion": {
                             "type": "string",
-                            "enum": list(labels),  # 명시적으로 list로 변환
+                            "enum": list(labels),  # Explicitly convert to list
                             "description": f"Classify the emotion of the text as one of given labels: {', '.join(labels)}"
                         },
                         "confidence_score": {
@@ -860,26 +1049,26 @@ def main(cfg):
         }
     ]
 
-    # 잘못된 감정 예측 통계 초기화
+    # Initialize invalid prediction statistics
     invalid_predictions = {
         "total": 0,
         "invalid_samples": [],
         "by_true_label": {str(label): 0 for label in labels}
     }
 
-    # RAG 초기화 (use_rag가 true일 때)
+    # Initialize RAG (use_rag is true)
     rag = None
     if cfg.model.use_rag:
         rag = EmotionRAG(cfg)
         rag.create_index(df_isear)
 
-    # 로깅 설정
-    logger = setup_logging(cfg, output_dir)
-
-    for index, row in tqdm(df_isear.iterrows(), total=len(df_isear)):
+    # 데이터 정제 후에 tqdm을 사용하도록 수정
+    df_isear = df_isear.head(n_samples)  # 정제된 데이터에서 샘플링
+    total_samples = len(df_isear)  # 실제 처리할 샘플 수
+    for index, row in tqdm(df_isear.iterrows(), total=total_samples):
         try:
             if rag:
-                rag.exclude_index(index)  # 현재 인덱스 제외
+                rag.exclude_index(index)
                 
             result = get_model_response(
                 str(row.text),
@@ -891,97 +1080,69 @@ def main(cfg):
                 llm=llm,
                 logger=logger,
                 rag=rag,
-                tools=tools  # tools 전달
+                tools=tools
             )
             
-            # 예측된 감정이 유효한지 먼저 확인
-            original_emotion = result["emotion"].lower()
-            
-            # 잘못된 예측 확인 및 기록
-            if original_emotion not in [l.lower() for l in labels]:
-                print(f"\nInvalid prediction found at index {index}")
-                print(f"Text: {row.text[:100]}...")
-                print(f"True emotion: {row.emotion}")
-                print(f"Predicted: {original_emotion}")
-                
-                # 잘못된 예측 통계 업데이트
-                invalid_predictions["total"] += 1
-                invalid_predictions["by_true_label"][str(row.emotion)] += 1
-                
-                # 잘못된 예측 샘플 저장 (모든 필요한 필드 포함)
-                invalid_sample = {
-                    "index": int(index),
-                    "text": str(row.text),
-                    "true_emotion": str(row.emotion),
-                    "predicted_emotion": str(original_emotion),
-                    "confidence": float(result.get("confidence_score", 0.0)),
-                    "explanation": str(result.get("explanation", "No explanation"))
-                }
-                invalid_predictions["invalid_samples"].append(invalid_sample)
-                print(f"Total invalid samples so far: {len(invalid_predictions['invalid_samples'])}")
-                
-                # 재시도 또는 매핑 로직
-                if getattr(cfg.general, 'retry_invalid_predictions', False):
-                    print("Attempting retry...")  # 재시도 시작
-                    try:
-                        retry_result = retry_emotion_prediction(
-                            str(row.text), labels, client, model, temperature, int(cfg.general.seed)
-                        )
-                        print(f"Retry result: {retry_result}")  # 재시도 결과 출력
-                        result["emotion"] = retry_result.get("emotion", "unknown")
-                        result["confidence_score"] = float(retry_result.get("confidence_score", 0.0))
-                        result["explanation"] = str(retry_result.get("explanation", "No explanation from retry"))
-                        
-                        # 여전히 잘못된 경우 매핑
-                        if result["emotion"].lower() not in [l.lower() for l in labels]:
-                            print(f"Retry emotion still invalid: {result['emotion']}, applying mapping")
-                            result["emotion"] = map_unknown_emotion(result["emotion"], labels, cfg=cfg)
-                    except Exception as e:
-                        print(f"Error in retry for row {index}: {e}")
-                        result["emotion"] = map_unknown_emotion(result["emotion"], labels, cfg=cfg)
-                else:
-                    print("Applying direct mapping")
-                    result["emotion"] = map_unknown_emotion(original_emotion, labels, cfg=cfg)
-
-            # 결과 저장
+            # 예측 결과 저장
             df_isear.at[index, f'predicted_emotion_{model_name}'] = result["emotion"]
             df_isear.at[index, f'confidence_score_{model_name}'] = result["confidence_score"]
             df_isear.at[index, f'explanation_{model_name}'] = result["explanation"]
             
-            # 예측 결과를 로그 파일에도 저장
-            result_log = f'''
-=== Prediction Result (Index: {index}) ===
-Text: {row.text}
-Ground Truth: {row.emotion}
-Predicted Emotion: {result['emotion']}
-Confidence Score: {result['confidence_score']}
-Explanation: {result['explanation']}
-{'='*50}
-'''
-            logger.info(result_log)  # 로그 파일에 저장
+            # 예측 결과 로깅 (매 샘플마다)
+            log_separator = "="*80
+            result_log = f"""
+{log_separator}
+[Sample Index: {index}] Prediction Result
+{log_separator}
+Input Text: {str(row.text).encode('ascii', errors='ignore').decode('ascii')}
+Ground Truth: {str(row.emotion).encode('ascii', errors='ignore').decode('ascii')}
+Predicted Emotion: {str(result['emotion']).encode('ascii', errors='ignore').decode('ascii')}
+Confidence Score: {float(result['confidence_score'])}
+Explanation: {str(result.get('explanation', '')).encode('ascii', errors='ignore').decode('ascii')}
+{log_separator}
+"""
+            safe_log(logger, 'info', result_log)
             
-            # 콘솔 출력용 (기존 print문 대체)
-            print(result_log)
+            # 프롬프트는 처음 한 번만 로깅
+            if not _INPUT_LOGGED:
+                input_log = f"""
+{log_separator}
+[Initial Sample] Prompt Details
+{log_separator}
+Raw Prompt Template:
+{str(template).encode('ascii', errors='ignore').decode('ascii')}
+{log_separator}
+"""
+                safe_log(logger, 'debug', input_log)
+                _INPUT_LOGGED = True
 
             if index % 500 == 0:
                 df_isear.to_csv(output_path, index=False)
-            
-            # 로깅
-            logger.debug(f"Raw response: {result}")
-            logger.info(f"Processed response: {result}")
 
         except Exception as e:
             print(f"Error processing row {index}: {e}")
-            # 오류 발생 시 기본값 저장
+            # 에러 발생 시에만 unknown으로 설정
             df_isear.at[index, f'predicted_emotion_{model_name}'] = "unknown"
             df_isear.at[index, f'confidence_score_{model_name}'] = 0.0
             df_isear.at[index, f'explanation_{model_name}'] = f"Error: {str(e)}"
+            
+            # 에러 로깅
+            error_log = f"""
+{log_separator}
+[Error at Sample Index: {index}]
+{log_separator}
+Input Text: {str(row.text).encode('ascii', errors='ignore').decode('ascii')}
+Ground Truth: {str(row.emotion).encode('ascii', errors='ignore').decode('ascii')}
+Error: {str(e)}
+{log_separator}
+"""
+            safe_log(logger, 'error', error_log)
             continue
 
-    # 최종 결과 저장
+    # Final result save
     df_isear.to_csv(output_path, index=False)
     
-    # 잘못된 예측 통계 저장
+    # Save invalid prediction statistics
     invalid_stats = {
         "total_samples": n_samples,
         "invalid_count": invalid_predictions["total"],
@@ -995,26 +1156,54 @@ Explanation: {result['explanation']}
     print(f"Invalid percentage: {invalid_stats['invalid_percentage']:.2f}%")
     print(f"Number of invalid samples collected: {len(invalid_stats['invalid_samples'])}")
     
-    # 통계 저장
+    # Save statistics
     save_prediction_stats(df_isear, invalid_stats, output_dir, model_name, labels)
     
-    # 평가 메트릭 계산 및 저장
+    # Calculate and save evaluation metrics
     report, cm = save_metrics(df_isear, cfg, model_name, output_dir)
     
-    # 주요 메트릭 출력
-    print("\nClassification Report Summary:")
+    # Final results log creation
+    final_log = f"""
+{'='*80}
+[Final Results Summary]
+{'='*80}
+
+1. Wrong Prediction Statistics:
+- Total samples: {invalid_stats['total_samples']}
+- Wrong predictions: {invalid_stats['invalid_count']}
+- Wrong prediction percentage: {invalid_stats['invalid_percentage']:.2f}%
+
+2. Classification Performance:
+- Overall accuracy: {report['overall']['accuracy']:.4f}
+
+3. Class-wise Performance:"""
+
+    # Add per-class performance metrics
+    for label, metrics in report['per_class'].items():
+        final_log += f"""
+{label}:
+  - Precision: {metrics['precision']:.4f}
+  - Recall: {metrics['recall']:.4f}
+  - F1 Score: {metrics['f1-score']:.4f}"""
+
+    final_log += f"\n{'='*80}\n"
+    
+    # Log to file
+    safe_log(logger, 'info', final_log)
+    
+    print("\nClassification report summary:")
     print(f"Accuracy: {report['overall']['accuracy']:.4f}")
-    print("\nPer-class metrics:")
+    print("\nClass-wise metrics:")
     for label, metrics in report['per_class'].items():
         print(f"{label}:")
-        print(f"  Precision: {metrics['precision']:.4f}")
-        print(f"  Recall: {metrics['recall']:.4f}")
-        print(f"  F1-score: {metrics['f1-score']:.4f}")
+        print(f"  precision: {metrics['precision']:.4f}")
+        print(f"  recall: {metrics['recall']:.4f}")
+        print(f"  f1-score: {metrics['f1-score']:.4f}")
 
 def save_prediction_stats(df, invalid_stats, output_dir, model_name, labels):
-    """예측 통계 저장"""
+    """Save prediction statistics"""
     try:
-        # 통계 파일 저장
+        # Save statistics file
         stats_file = output_dir / f'prediction_stats_{model_name}.json'
         with open(stats_file, 'w', encoding='ascii') as f:
             json.dump(invalid_stats, f, indent=2, ensure_ascii=True)
@@ -1024,33 +1213,34 @@ def save_prediction_stats(df, invalid_stats, output_dir, model_name, labels):
 def metric():
     cfg = OmegaConf.load("config/llm.yaml")
     
-    # 경로를 Path 객체로 변환하여 올바른 경로 구성
+    # Convert path to Path object for correct path construction
     base_path = Path("D:/dev/isp_rag_cluster/outputs")
     
-    # 실제 존재하는 디렉토리 확인
+    # Verify actual existence of directory
     output_folders = [f for f in base_path.iterdir() if f.is_dir()]
     if not output_folders:
         raise FileNotFoundError("No output folders found")
     
-    # 가장 최근 폴더 선택 (타임스탬프 기준)
+    # Select latest folder (based on timestamp)
     latest_folder = max(output_folders, key=lambda x: x.stat().st_mtime)
-    latest_folder = Path("outputs/20250228_122946_llama3.2/dataset-isear_model-llama3.2") #Path("outputs/20250228_000911/dataset-isear_model-gpt-3.5-turbo")
-    # 파일 경로 구성
-    model_name = "llama3.2"  # 또는 다른 모델명
+    latest_folder = Path(r"outputs\20250302_224025_gpt-4o_rag\dataset-isear_model-gpt-4o") #Path("outputs/20250228_000911/dataset-isear_model-gpt-3.5-turbo")
+    # File path construction
     model_name = latest_folder.name.split("_model-")[1]
+    #model_name = "llama3.2"  # Or other model name
+    
     file_name = f"dataset-isear_model-{model_name}.csv"
     latest_folder = latest_folder.parent
     file_path = latest_folder / file_name
     
-    print(f"Looking for file at: {file_path}")  # 디버깅용
+    print(f"Looking for file at: {file_path}")  # For debugging
     
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
     
-    # 파일 읽기
+    # Read file
     df_isear = pd.read_csv(file_path)
     
-    # 메트릭 저장
+    # Save metrics
     save_metrics(df_isear, cfg, model_name, latest_folder)
 
 if __name__ == "__main__":
