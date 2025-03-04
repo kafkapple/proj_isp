@@ -115,6 +115,13 @@ def save_metrics(df, cfg, model_name, output_dir):
         file.write("=== Classification Report (Valid Samples Only) ===\n")
         file.write(report_str)
     
+    # Save classification report as CSV with transpose
+    report_df = pd.DataFrame(report_dict).round(4)
+    report_df = report_df.drop(['accuracy'], errors='ignore')  # accuracy 행이 있다면 제거
+    report_df = report_df.transpose()  # 행과 열을 전치
+    report_df.index.name = 'class'  # 인덱스 이름을 'metric'으로 변경
+    report_df.to_csv(output_dir / f'classification_report_{model_name}.csv')
+    
     # Save metrics result
     metrics_result = {
         "overall": {
@@ -449,12 +456,28 @@ def clean_json_response(response_text: str) -> str:
         
         # 응답이 단순 문자열인 경우 처리
         if isinstance(response_text, str):
-            # 공백 제거 및 소문자 변환
-            response_text = response_text.strip().lower()
+            # "Expected Output:" 텍스트 제거
+            response_text = re.sub(r'^.*?Expected Output:\s*', '', response_text, flags=re.IGNORECASE)
+            
+            # JSON 블록 찾기 (중첩된 중괄호도 처리)
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, response_text, re.DOTALL)
+            
+            if matches:
+                json_text = matches[-1]  # 마지막 JSON 객체 사용
+                print("Extracted JSON:", repr(json_text))
+                
+                # JSON 파싱 시도
+                try:
+                    parsed = json.loads(json_text)
+                    if isinstance(parsed, dict) and "emotion" in parsed:
+                        return json.dumps(parsed, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    pass
             
             # 감정 단어 추출 시도
             emotion_pattern = r'emotion:\s*(\w+)'
-            emotion_match = re.search(emotion_pattern, response_text)
+            emotion_match = re.search(emotion_pattern, response_text, re.IGNORECASE)
             
             if emotion_match:
                 emotion = emotion_match.group(1).lower()
@@ -464,91 +487,8 @@ def clean_json_response(response_text: str) -> str:
                     "explanation": "Emotion extracted from text response"
                 }, ensure_ascii=False)
             
-            # JSON 형식이 아닌 단순 단어인 경우
-            if not (response_text.startswith('{') or response_text.startswith('[')):
-                # 기본 JSON 형식으로 변환
-                return json.dumps({
-                    "emotion": response_text,
-                    "confidence_score": 0.5,
-                    "explanation": "Direct word response converted to JSON"
-                }, ensure_ascii=False)
-        
-        # 1. Find JSON block
-        json_pattern = r'\{[^{}]*\}'
-        matches = re.findall(json_pattern, response_text, re.DOTALL)
-        
-        if not matches:
-            raise ValueError("No JSON object found in response")
-            
-        json_text = matches[-1]  # Take the last JSON object if multiple found
-        print("Extracted JSON:", repr(json_text))
-        
-        # 2. Clean and standardize JSON format
-        # Remove whitespace and newlines
-        json_text = re.sub(r'[\n\r\t\s]+', ' ', json_text.strip())
-        
-        # Fix property names (add double quotes)
-        json_text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_text)
-        
-        # Handle nested quotes in string values
-        def fix_string_value(match):
-            value = match.group(1)
-            # Escape any existing double quotes
-            value = value.replace('"', '\\"')
-            # Replace single quotes with double quotes
-            value = value.replace("'", "'")
-            return f'"{value}"'
-        
-        # Fix string values (add double quotes and handle escaping)
-        json_text = re.sub(r':\s*"([^"]*)"', lambda m: f':{fix_string_value(m)}', json_text)
-        json_text = re.sub(r':\s*\'([^\']*)\'', lambda m: f':{fix_string_value(m)}', json_text)
-        json_text = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*([,}])', r':"\1"\2', json_text)
-        
-        print("After cleanup:", repr(json_text))
-        
-        # 3. Validate and re-serialize JSON
-        parsed = json.loads(json_text)
-        
-        # Ensure required fields are present
-        required_fields = ["emotion", "confidence_score", "explanation"]
-        if not all(field in parsed for field in required_fields):
-            # 필수 필드가 없는 경우 기본값으로 채움
-            if "emotion" not in parsed:
-                parsed["emotion"] = "unknown"
-            if "confidence_score" not in parsed:
-                parsed["confidence_score"] = 0.5
-            if "explanation" not in parsed:
-                parsed["explanation"] = "Incomplete JSON response"
-            
-        # Ensure confidence_score is a number
-        if not isinstance(parsed["confidence_score"], (int, float)):
-            parsed["confidence_score"] = float(parsed["confidence_score"])
-            
-        final_json = json.dumps(parsed, ensure_ascii=False)
-        print("Final JSON:", repr(final_json))
-        
-        return final_json
-        
-    except Exception as e:
-        print(f"Error in clean_json_response: {e}")
-        print(f"Original response: {response_text}")
-        
-        # 에러 발생 시 단순 문자열 응답 처리 시도
-        try:
-            # 응답에서 감정 단어 추출 시도
-            emotion_pattern = r'emotion:\s*(\w+)'
-            emotion_match = re.search(emotion_pattern, str(response_text), re.IGNORECASE)
-            
-            if emotion_match:
-                emotion = emotion_match.group(1).lower()
-                return json.dumps({
-                    "emotion": emotion,
-                    "confidence_score": 0.5,
-                    "explanation": "Extracted from text response"
-                }, ensure_ascii=False)
-                
             # 응답에서 알파벳 문자열만 추출
-            word_match = re.search(r'[a-zA-Z]+', str(response_text))
+            word_match = re.search(r'[a-zA-Z]+', response_text)
             if word_match:
                 emotion_word = word_match.group(0).lower()
                 return json.dumps({
@@ -556,14 +496,21 @@ def clean_json_response(response_text: str) -> str:
                     "confidence_score": 0.5,
                     "explanation": "Extracted from non-JSON response"
                 }, ensure_ascii=False)
-        except:
-            pass
         
         # 모든 처리 실패 시 기본값 반환
         return json.dumps({
             "emotion": "unknown",
             "confidence_score": 0.0,
-            "explanation": f"Failed to parse response: {str(e)}"
+            "explanation": "Failed to parse response"
+        }, ensure_ascii=False)
+        
+    except Exception as e:
+        print(f"Error in clean_json_response: {e}")
+        print(f"Original response: {response_text}")
+        return json.dumps({
+            "emotion": "unknown",
+            "confidence_score": 0.0,
+            "explanation": f"Error processing response: {str(e)}"
         }, ensure_ascii=False)
 
 def validate_prompt_template(template: str) -> bool:
@@ -1065,6 +1012,10 @@ def main(cfg):
     # 데이터 정제 후에 tqdm을 사용하도록 수정
     df_isear = df_isear.head(n_samples)  # 정제된 데이터에서 샘플링
     total_samples = len(df_isear)  # 실제 처리할 샘플 수
+    
+    # 로깅을 위한 구분자 정의
+    log_separator = "="*80
+    
     for index, row in tqdm(df_isear.iterrows(), total=total_samples):
         try:
             if rag:
@@ -1089,7 +1040,6 @@ def main(cfg):
             df_isear.at[index, f'explanation_{model_name}'] = result["explanation"]
             
             # 예측 결과 로깅 (매 샘플마다)
-            log_separator = "="*80
             result_log = f"""
 {log_separator}
 [Sample Index: {index}] Prediction Result
@@ -1223,7 +1173,7 @@ def metric():
     
     # Select latest folder (based on timestamp)
     latest_folder = max(output_folders, key=lambda x: x.stat().st_mtime)
-    latest_folder = Path(r"outputs\20250302_224025_gpt-4o_rag\dataset-isear_model-gpt-4o") #Path("outputs/20250228_000911/dataset-isear_model-gpt-3.5-turbo")
+    latest_folder = Path(r"outputs\20250303_172613_qwen2.5_emotion_prompt\dataset-isear_model-qwen2.5")
     # File path construction
     model_name = latest_folder.name.split("_model-")[1]
     #model_name = "llama3.2"  # Or other model name

@@ -34,3 +34,4 @@ dependencies:
     - langchain-ollama
     - anthropic
     - tabulate
+    - dataframe-image

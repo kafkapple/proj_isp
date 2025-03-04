@@ -43,16 +43,16 @@ data:
     - "none"
     - "blank"
 model:
-  type: "openai" #"ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
-  name: "gpt-4o" #"qwen2.5" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
+  type: "ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
+  name: "sebdg/emotional_llama" #"llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
   #claude-3-5-sonnet-20241022
   #'gpt-4o' 
    #"deepseek-r1" #
    #"sebdg/emotional_llama" #
-  max_tokens: 200
-  temperature: 0.3
+  max_tokens: 100 #200
+  temperature: 0.1 #0.3
   use_template: true #true
-  template: emotion_fewshot_simple #blank_prompt #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
+  template: basic_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
   use_rag: false #false
   function_calling: false
 rag:
@@ -67,7 +67,30 @@ prompt:
   blank_prompt: &blank_prompt |
     "emotion", "reason",
     Text: {text}
+  basic_prompt: &basic_prompt |
+    You are an expert in emotion analysis. Given a text input, classify its **primary emotion** strictly as one of the following: **'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame',** or **'guilt'**. **Do not use any other emotions.**
+    Respond ONLY with a JSON object in this format:
+    {
+    "emotion": "emotion_name",
+    "confidence_score": value_between_0_and_1,
+    "explanation": "brief_explanation"
+    } 
+    <example>
+    Text: Being caught in acts of dishonesty or deceit
+      {
+    "emotion": "shame",
+    "confidence_score": 0.95,
+    "explanation": "The text mentions being caught in acts of dishonesty or deceit, which is a strong indicator of shame."
+    } 
+    Text: Breaking a rule and later feeling remorseful.
+    {
+    "emotion": "guilt",
+    "confidence_score": 0.95,
+    "explanation": "The text mentions breaking a rule and later feeling remorseful, which is a strong indicator of guilt."
+    } 
+    </example>
 
+    
   # Basic emotion prompt
   emotion: &emotion_prompt |
     # Emotion Analysis Prompt
