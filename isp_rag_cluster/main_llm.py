@@ -17,13 +17,11 @@ from tqdm import tqdm
 from openai import OpenAI
 from omegaconf import OmegaConf
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
-from langchain.prompts import PromptTemplate
 from langchain_ollama import OllamaLLM
 from rag import EmotionRAG
 import logging
 import sys
 from typing import Dict, Any
-from langchain_community.embeddings import HuggingFaceEmbeddings  # New import path
 import codecs
 
 # Add global flag for prompt logging
@@ -207,14 +205,10 @@ def map_unknown_emotion(emotion: str, labels: list, mapping_dict: dict = None, c
 
 def retry_emotion_prediction(text: str, labels: list, client, model: str, temperature: float, seed: int) -> dict:
     """Retry emotion prediction attempt"""
-    # 특정 모델들은 function calling을 지원하지 않음
-    no_function_call_models = [
-        "hf.co/tensorblock/emotion-llama-gguf",
-        "sebdg/emotional_llama",
-        "deepseek-r1"
-    ]
+    # 특정 모델 only function calling을 지원
+    function_call_models = cfg.model.function_call_models
     
-    use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
+    use_function_call = any(model_name.lower() in model.lower() for model_name in function_call_models)
     
     try:
         if use_function_call:
@@ -518,7 +512,7 @@ def validate_prompt_template(template: str) -> bool:
     required_sections = ['Emotion Definitions', 'Output Format']
     return all(section in template for section in required_sections)
 
-def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, llm=None, logger=None, rag=None, tools=None) -> dict:
+def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, logger=None, rag=None, tools=None) -> dict:
     """Get model response with RAG or template"""
     global _PROMPT_LOGGED  # 전역 변수 선언 추가
     
@@ -557,7 +551,7 @@ def get_model_response(text: str, labels: list, client, model: str, temperature:
 
         try:
             if cfg.model.type == "ollama":
-                response = llm.invoke(final_prompt)
+                response = client.invoke(final_prompt)
             elif cfg.model.type == "anthropic":
                 response = client.messages.create(
                     model=model,
@@ -574,17 +568,14 @@ def get_model_response(text: str, labels: list, client, model: str, temperature:
             else:
                 # OpenAI, Upstage, etc. use chat completion
                 messages = [
-                    {"role": "system", "content": final_prompt}
+                    {"role": "system", 
+                     "content": final_prompt}
                 ]
                 
                 # 특정 모델들은 function calling을 지원하지 않음
-                no_function_call_models = [
-                    "hf.co/tensorblock/emotion-llama-gguf",
-                    "sebdg/emotional_llama",
-                    "deepseek-r1"
-                ]
+                function_call_models = cfg.model.function_call_models
                 
-                use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
+                use_function_call = any(model_name.lower() in model.lower() for model_name in function_call_models)
                 
                 if use_function_call:
                     response = client.chat.completions.create(
@@ -645,25 +636,6 @@ def get_model_response(text: str, labels: list, client, model: str, temperature:
             logger.error(f"Error in get_model_response: {e}")
         # 최종 실패 시 retry
         return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
-
-def get_prompt(cfg, text: str, labels: list, model_name: str) -> str:
-    """Select and generate prompt template"""
-    if cfg.model.use_template:
-        # Select prompt based on model name
-        if 'llama' in model_name.lower():
-            template = cfg.prompt.llama
-        elif 'qwen' in model_name.lower():
-            template = cfg.prompt.qwen
-        else:
-            # Default prompt
-            template = cfg.prompt.target_prompt
-        return template
-    else:
-        return f"""Analyze the emotional content of the following text and classify it as one of: {', '.join(labels)}
-
-Text: {text}
-
-Provide your analysis in a structured format."""
 
 def save_prompt_response(text: str, prompt, response: dict, output_dir: Path, index: int):
     """Save prompt and response as log"""
@@ -848,7 +820,7 @@ def get_output_dir_name(model_name: str, cfg) -> str:
     
     return "_".join(name_parts)
 
-def initialize_models(cfg):
+def initialize_models(cfg, df):
     """Initialize LLM and RAG model"""
     llm = None
     rag = None
@@ -880,6 +852,7 @@ def initialize_models(cfg):
     
     if cfg.model.use_rag:
         rag = EmotionRAG(cfg)
+        rag.create_index(df)
     
     return llm, rag
 
@@ -891,9 +864,6 @@ def sanitize_model_name(model_name: str) -> str:
 def main(cfg):
     # 전역 변수 사용 선언
     global _INPUT_LOGGED
-    
-    # Initialize models
-    llm, rag = initialize_models(cfg)
     
     # Convert config values to Python basic types first
     model_type = str(cfg.model.type)
@@ -935,37 +905,9 @@ def main(cfg):
     # Set output file path (directory already created)
     output_path = Path(cfg.general.output_path) / f'dataset-{cfg.data.name}_model-{model_name}.csv'
 
-    # Initialize client
-    if model_type == "openai":
-        base_url = "https://api.openai.com/v1"
-        api_key = os.getenv("OPENAI_API_KEY")
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "upstage":
-        base_url = "https://api.upstage.ai/v1/solar"
-        api_key = os.getenv("UPSTAGE_API_KEY")
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "ollama":
-        base_url = "http://localhost:11434/v1"
-        api_key = "ollama"
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-        client = Anthropic(api_key=api_key)
-        print("Anthropic Claude model initialized")
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-
+    # Initialize models
+    client, rag = initialize_models(cfg, df_isear)
+    
     # Function calling tool definition
     tools = [
         {
@@ -1002,21 +944,10 @@ def main(cfg):
         "invalid_samples": [],
         "by_true_label": {str(label): 0 for label in labels}
     }
-
-    # Initialize RAG (use_rag is true)
-    rag = None
-    if cfg.model.use_rag:
-        rag = EmotionRAG(cfg)
-        rag.create_index(df_isear)
-
-    # 데이터 정제 후에 tqdm을 사용하도록 수정
-    df_isear = df_isear.head(n_samples)  # 정제된 데이터에서 샘플링
-    total_samples = len(df_isear)  # 실제 처리할 샘플 수
-    
     # 로깅을 위한 구분자 정의
     log_separator = "="*80
     
-    for index, row in tqdm(df_isear.iterrows(), total=total_samples):
+    for index, row in tqdm(df_isear.iterrows(), total=n_samples):
         try:
             if rag:
                 rag.exclude_index(index)
@@ -1028,7 +959,6 @@ def main(cfg):
                 model,
                 temperature,
                 cfg,
-                llm=llm,
                 logger=logger,
                 rag=rag,
                 tools=tools
