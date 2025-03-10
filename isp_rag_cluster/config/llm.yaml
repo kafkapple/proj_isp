@@ -4,12 +4,13 @@ general:
   random_state: 42
   seed: 42
   output_path: 'outputs/${general.run_name}'
-  retry_invalid_predictions: true  # Default value is false
+  retry_invalid_predictions: false # true  # Default value is false
   logging:
     save_prompts: true  # Whether to save prompts
     save_responses: true  # Whether to save responses
     log_path: 'logs'  # Log save path
     log_level: 'DEBUG'  # Log level setting
+    log_interval: 500
 data:
   name: "isear"  # Dataset name (isear, custom, etc.)
   n_samples: 10 #100 # Number of samples to use (-1 for all)
@@ -28,9 +29,7 @@ data:
       path: 'data/isear/isear.csv'
       labels: ['joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt']
       
-      emotions:
-        # 1-7 in order of emotion classes
-        classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+
   exclude_length: 77
   exclude_phrases:
     - "no response"
@@ -43,29 +42,214 @@ data:
     - "none"
     - "blank"
 model:
-  type: "upstage" #"ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
-  name: "solar-1-mini-chat" #"sebdg/emotional_llama" #"llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
+  type: "ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
+  name: "qwen2.5:3b" #"llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
   #claude-3-5-sonnet-20241022
   #'gpt-4o' 
    #"deepseek-r1" #
    #"sebdg/emotional_llama" #
   max_tokens: 100 #200
   temperature: 0.1 #0.3
-  use_template: true #true
-  template: basic_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
-  use_rag: false #false
+  # use_template: true #true
+  template: baseline_prompt #rag_prompt #custom_prompt #zero_shot_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
+  # use_rag: false #false
   function_calling: false
   function_call_models:
     - "gpt-4o"
     - "claude-3-5-sonnet-20241022"
 rag:
-  k_examples: 4
-  embedding_model: "BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
+  k_examples: 7
+  threshold: 0.1
+  embedding_model: "j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" #"BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
   db_path: "data/vector_db"  # Vector DB save base path
   save_db: true  # Whether to save DB
   load_db: true  # Whether to load existing DB
   
 prompt:
+  function_call_models:
+    - "gpt-4o"
+    - "claude-3-5-sonnet-20241022"
+  baseline_prompt: |
+    ## Instructions
+    You are an expert in emotion analysis.
+    Classify the primary emotion in the given text strictly as one of: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt'.
+
+    Do not use any other emotions.
+
+    ## Output Format
+    Respond ONLY with a JSON object in this format:
+    {
+      "emotion": "one_of_the_specified_emotions",
+      "confidence_score": value_between_0_and_1,
+      "explanation": "brief_explanation"
+    }
+
+  zero_shot_prompt: |
+    ## Instructions
+    You are an expert in emotion analysis.
+    Classify the primary emotion in the given text strictly as one of: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt'.
+
+    ## Emotion Definitions:
+    - joy: happiness, pleasure, delight.
+    - fear: anxiety, dread regarding danger or uncertainty.
+    - anger: frustration, rage in response to injustice.
+    - sadness: sorrow, grief, disappointment.
+    - disgust: revulsion, strong dislike.
+    - shame: embarrassment, humiliation.
+    - guilt: remorse, regret for wrongdoing.
+    
+    Do not use any other emotions.
+
+    ## Output Format
+    Respond ONLY with a JSON object in this format:
+    {
+      "emotion": "one_of_the_specified_emotions",
+      "confidence_score": value_between_0_and_1,
+      "explanation": "brief_explanation"
+    }
+
+  
+  few_shot_prompt: |
+    ## Instructions
+    You are an expert in emotion analysis.
+    Classify the primary emotion in the given text strictly as one of: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt'.
+
+    ## Emotion Definitions:
+    - joy: happiness, pleasure, delight.
+    - fear: anxiety, dread regarding danger or uncertainty.
+    - anger: frustration, rage in response to injustice.
+    - sadness: sorrow, grief, disappointment.
+    - disgust: revulsion, strong dislike.
+    - shame: embarrassment, humiliation.
+    - guilt: remorse, regret for wrongdoing.
+    
+    Do not use any other emotions.
+
+    ## Few-shot Examples for Reference:
+    {
+      "example_1": {
+        "text": "Getting accepted to university",
+        "expected_output": {
+          "emotion": "joy",
+          "confidence_score": 0.95,
+          "explanation": "The text indicates happiness and excitement."
+        }
+      },
+      "example_2": {
+        "text": "Hearing strange noises at night",
+        "expected_output": {
+          "emotion": "fear",
+          "confidence_score": 0.90,
+          "explanation": "The text suggests anxiety or dread."
+        }
+      },
+      "example_3": {
+        "text": "Being treated unfairly at work",
+        "expected_output": {
+          "emotion": "anger",
+          "confidence_score": 0.92,
+          "explanation": "The text shows frustration due to unfair treatment."
+        }
+      },
+      "example_4": {
+        "text": "Losing a close friend",
+        "expected_output": {
+          "emotion": "sadness",
+          "confidence_score": 0.94,
+          "explanation": "The text indicates grief and loss."
+        }
+      },
+      "example_5": {
+        "text": "Finding spoiled food",
+        "expected_output": {
+          "emotion": "disgust",
+          "confidence_score": 0.93,
+          "explanation": "The text indicates strong aversion."
+        }
+      },
+      "example_6": {
+        "text": "Making a mistake in public",
+        "expected_output": {
+          "emotion": "shame",
+          "confidence_score": 0.90,
+          "explanation": "The text reflects embarrassment."
+        }
+      },
+      "example_7": {
+        "text": "Hurting someone's feelings",
+        "expected_output": {
+          "emotion": "guilt",
+          "confidence_score": 0.91,
+          "explanation": "The text suggests remorse."
+        }
+      }
+    }
+    Use these examples as guidelines when analyzing the text.
+
+    ## Output Format
+    Respond ONLY with a JSON object in this format:
+    {
+      "emotion": "one_of_the_specified_emotions",
+      "confidence_score": value_between_0_and_1,
+      "explanation": "brief_explanation"
+    }
+  custom_prompt: |
+    ## Instructions
+    You are an expert in emotion analysis.
+    Classify the primary emotion in the given text strictly as one of: 'joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt'.
+
+    ## Emotion Definitions:
+    - joy: happiness, pleasure, delight.
+    - fear: anxiety, dread regarding danger or uncertainty.
+    - anger: frustration, rage in response to injustice.
+    - sadness: sorrow, grief, disappointment.
+    - disgust: revulsion, strong dislike.
+    - shame: embarrassment, humiliation.
+    - guilt: remorse, regret for wrongdoing.
+    
+    Do not use any other emotions.
+
+    ## Detailed Guidelines for Distinguishing Shame, Guilt, and Disgust:
+    Below are emotions that are particularly difficult to distinguish. It is important to distinguish between these emotions.
+
+    1. Shame:
+      - Definition: Shame is a self-conscious emotion arising from a perception of personal inadequacy or failure, often experienced when one feels exposed to social judgment or humiliation. It emphasizes a negative evaluation of the self.
+      - Examples:
+        - "Feeling deeply embarrassed after a public mistake."
+        - "Experiencing a sense of worthlessness when criticized by peers."
+      - Key Indicators:
+        - Focus on social evaluation and self-worth.
+        - Emphasis on internal feelings of inadequacy rather than direct remorse for a specific harmful action.
+
+    2. Guilt:
+      - Definition: Guilt is an emotion that occurs when an individual recognizes that their actions have harmed someone else or violated moral standards. It is linked to a sense of responsibility and a desire to make amends.
+      - Examples:
+        - "Feeling remorse after hurting a friend's feelings."
+        - "Experiencing regret after realizing one's mistake caused harm."
+      - Key Indicators:
+        - Direct association with specific actions that caused harm.
+        - Accompanied by a willingness to apologize or take corrective action.
+        - Focus on the behavior rather than on personal inadequacy.
+
+    3. Disgust:
+      - Definition: Disgust is a strong, aversive emotion characterized by revulsion or repulsion toward something offensive, unclean, or morally objectionable. It primarily serves as a mechanism to avoid potential contamination or unethical behavior.
+      - Examples:
+        - "Feeling physically nauseated when encountering unhygienic conditions."
+        - "Experiencing revulsion upon hearing about unethical actions."
+      - Key Indicators:
+        - Emphasis on an immediate aversive reaction.
+        - Less about self-reflection and more about rejecting or avoiding the stimulus.
+        - Often accompanied by physical expressions such as wrinkling the nose or turning away.
+
+        ## Output Format
+    Respond ONLY with a JSON object in this format:
+    {
+      "emotion": "one_of_the_specified_emotions",
+      "confidence_score": value_between_0_and_1,
+      "explanation": "brief_explanation"
+    }
+
+ 
   # Blank prompt (no template)
   blank_prompt: &blank_prompt |
     "emotion", "reason",
@@ -111,12 +295,11 @@ prompt:
     ## Output Format
     Respond ONLY with a JSON object in this format:
     {
-      "emotion": "emotion_name",
+      "emotion": "one_of_the_specified_emotions",
       "confidence_score": value_between_0_and_1,
       "explanation": "brief_explanation"
     }
     
-  
 
   # Enhanced emotion prompt with examples
   emotion_fewshot_simple: &emotion_fewshot_simple |
@@ -400,16 +583,4 @@ model_templates:
   "deepseek-r1": *blank_prompt
   "hf.co/tensorblock/Emotion-LLaMA-GGUF": *blank_prompt
 
-# # Model prompt mapping
-# qwen2.5: *emotion_fewshot
-# llama3.2: *emotion_fewshot
-# emotion-llama: *emotion_fewshot
-# emotion-qwen: *emotion_fewshot
-# gpt-3.5-turbo: *emotion_prompt
-# solar-1-mini-chat: *emotion_prompt #*emotion_fewshot
-# claude-3-sonnet-20240229: *emotion_prompt #*emotion_fewshot  # Update model name mapping
-# hf.co/tensorblock/Emotion-LLaMA-GGUF: *emotion_fewshot # *emotion_fewshot
-# sebdg/emotional_llama: *emotion_fewshot
-# deepseek-r1: *emotion_fewshot
-# gemma2: *emotion_fewshot
 

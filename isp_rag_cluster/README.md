@@ -1,129 +1,130 @@
 # Emotion Classification System
 
+## Environment Setup
+
+### .env File Configuration
+```
+OPENAI_API_KEY=your_openai_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+UPSTAGE_API_KEY=your_upstage_api_key
+```
+
+## Running the System
+
+### Basic Execution
+```bash
+python main_llm.py
+```
+
+### Override Configuration
+```bash
+python main_llm.py model.type=openai model.name=gpt-4
+```
+
+## Main Entry Points
+
+### main_llm.py
+- Primary entry point for emotion classification system
+- Model initialization and execution
+- RAG system integration
+- Result logging and metrics storage
+
+Key Features:
+1. Model initialization (`initialize_models`)
+2. Data loading and preprocessing (`load_data`)
+3. RAG system initialization (if configured)
+4. Batch processing and result storage
+5. Performance metrics calculation and reporting
+
+## Recent Major Changes
+
+### 1. RAG System Improvements
+- Threshold-based filtering (threshold: 0.1)
+- Similarity score normalization
+- Enhanced debugging information
+
+### 2. Prompt System Enhancements
+- Template-based prompt management
+- RAG-integrated prompt support
+- Function calling format support
+
+### 3. Logging System Strengthening
+- Detailed debug information
+- Sample-by-sample result logging
+- Improved error handling
+
 ## Configuration Options
 
-### Model Settings (`model` section in `llm.yaml`)
+### Model Settings (`model` section)
 
 1. **Model Type** (`type`)
-   - `ollama`: Local models via Ollama
-   - `openai`: OpenAI API models
-   - `upstage`: Upstage API models
+   - `ollama`: Local models
+   - `openai`: OpenAI API
+   - `upstage`: Upstage API
+   - `anthropic`: Anthropic API (new)
 
-2. **Function Calling** (`function_calling`)
-   - `true`: Uses OpenAI-style function calling format
-     - Structured output with strict emotion labels
-     - Better for API-based models (GPT, Claude)
-   - `false`: Uses LangChain's output parser
-     - Better for local models (Llama, Ollama)
+2. **Prompt Templates** (`template`)
+   - `basic_prompt`: Basic emotion classification
+   - `rag_prompt`: RAG-based classification
+   - Custom templates per model support
 
-3. **Template Usage** (`use_template`)
-   - `true`: Uses predefined emotion-specific prompts
-     - Model-specific templates (`llama`, `qwen`, etc.)
-     - Detailed emotion definitions and examples
-   - `false`: Uses simple generic prompt
-     - Basic emotion classification instruction
+3. **RAG Settings** (`rag` section)
+   - `k_examples`: Number of similar examples (default: 7)
+   - `threshold`: Similarity threshold (default: 0.1)
+   - `embedding_model`: Embedding model configuration
+   - `save_db`: Vector DB save option
+   - `load_db`: Existing DB load option
 
-4. **RAG** (`use_rag`)
-   - `true`: Uses Retrieval-Augmented Generation
-     - Finds similar examples from dataset
-     - Provides context for classification
-   - `false`: Direct classification without examples
+### Logging Settings
+- `output_path`: Results storage path
+- `log_interval`: Intermediate results save interval
 
-## Common Configuration Combinations
+## Recommended Configurations
 
-### 1. Local Model Setup
+### 1. High Performance Setup
+```yaml
+model:
+  type: "openai"
+  name: "gpt-4"
+  template: "rag_prompt"
+rag:
+  k_examples: 7
+  threshold: 0.1
+```
+
+### 2. Local Execution Setup
 ```yaml
 model:
   type: "ollama"
   name: "llama2"
-  function_calling: false
-  use_template: true
-  use_rag: false
+  template: "basic_prompt"
 ```
-- Best for: Local Llama models
-- Uses: LangChain parser + Detailed template
-
-### 2. API Model Setup
-```yaml
-model:
-  type: "openai"
-  name: "gpt-3.5-turbo"
-  function_calling: true
-  use_template: true
-  use_rag: false
-```
-- Best for: OpenAI/API models
-- Uses: Function calling + Detailed template
 
 ### 3. RAG-Enhanced Setup
 ```yaml
 model:
-  type: "ollama"
-  name: "llama2"
-  function_calling: false
-  use_template: false
-  use_rag: true
-```
-- Best for: Any model type
-- Uses: Similar examples as context
-
-### 4. Simple Classification Setup
-```yaml
-model:
-  type: "ollama"
-  name: "llama2"
-  function_calling: false
-  use_template: false
-  use_rag: false
-```
-- Best for: Quick testing
-- Uses: Basic prompt only
-
-## Processing Flow
-
-1. **Function Calling = true**
-   - Structured JSON output via function definition
-   - Strict emotion label validation
-   - Better error handling
-
-2. **Function Calling = false**
-   - LangChain output parser
-   - More flexible but less structured
-   - Good for simpler models
-
-3. **Template Usage**
-   - With template: Detailed emotion guidelines
-   - Without template: Simple classification prompt
-
-4. **RAG Usage**
-   - With RAG: Similar examples as context
-   - Without RAG: Direct classification
-
-## Recommended Combinations
-
-1. **High Accuracy Setup**
-```yaml
-model:
-  type: "openai"
-  function_calling: true
-  use_template: true
-  use_rag: true
+  type: "anthropic"
+  name: "claude-3-opus-20240229"
+  template: "rag_prompt"
+rag:
+  k_examples: 5
+  threshold: 0.1
 ```
 
-2. **Fast Local Setup**
-```yaml
-model:
-  type: "ollama"
-  function_calling: false
-  use_template: true
-  use_rag: false
-```
+## Performance Metrics
+- Accuracy
+- Class-wise performance (Precision, Recall, F1)
+- Misclassification statistics
+- RAG system performance indicators
 
-3. **Balanced Setup**
-```yaml
-model:
-  type: "ollama"
-  function_calling: false
-  use_template: false
-  use_rag: true
-```
+## Error Handling
+- Model initialization failures
+- RAG system initialization failures
+- API call errors
+- Result parsing errors
+
+## Future Improvements
+1. Multi-model ensemble
+2. RAG system optimization
+3. Real-time processing support
+4. Batch processing performance enhancement
