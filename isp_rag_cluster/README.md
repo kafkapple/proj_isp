@@ -61,10 +61,12 @@ Key Features:
    - `ollama`: Local models
    - `openai`: OpenAI API
    - `upstage`: Upstage API
-   - `anthropic`: Anthropic API (new)
+   - `anthropic`: Anthropic API 
 
 2. **Prompt Templates** (`template`)
-   - `basic_prompt`: Basic emotion classification
+   - `baseline_prompt`: Baseline emotion classification
+   - `zero_shot_prompt`:
+   - `few_shot_prompt`:
    - `rag_prompt`: RAG-based classification
    - Custom templates per model support
 
@@ -81,35 +83,6 @@ Key Features:
 
 ## Recommended Configurations
 
-### 1. High Performance Setup
-```yaml
-model:
-  type: "openai"
-  name: "gpt-4"
-  template: "rag_prompt"
-rag:
-  k_examples: 7
-  threshold: 0.1
-```
-
-### 2. Local Execution Setup
-```yaml
-model:
-  type: "ollama"
-  name: "llama2"
-  template: "basic_prompt"
-```
-
-### 3. RAG-Enhanced Setup
-```yaml
-model:
-  type: "anthropic"
-  name: "claude-3-opus-20240229"
-  template: "rag_prompt"
-rag:
-  k_examples: 5
-  threshold: 0.1
-```
 
 ## Performance Metrics
 - Accuracy
