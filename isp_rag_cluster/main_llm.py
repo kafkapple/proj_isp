@@ -180,44 +180,16 @@ def save_metrics(df, cfg, model_name, output_dir):
     
     return metrics_result, cm
 
-def map_unknown_emotion(emotion: str, labels: list, mapping_dict: dict = None, cfg: dict = None) -> str:
-    """Map unknown emotion"""
-    if mapping_dict is None:
-        mapping_dict = {
-            'happy': 'joy',
-            'happiness': 'joy',
-            'anxious': 'fear',
-            'anxiety': 'fear',
-            'worried': 'fear',
-            'mad': 'anger',
-            'frustrated': 'anger',
-            'depressed': 'sadness',
-            'disappointed': 'sadness',
-            'disgusted': 'disgust',
-            'ashamed': 'shame',
-            'embarrassed': 'shame',
-            'regret': 'guilt',
-            'remorse': 'guilt',
-            'unknown': 'sadness'
-        }
-    
-    mapped_emotion = mapping_dict.get(emotion.lower(), cfg.data.default_emotion)
-    print(f"Mapping emotion: {emotion} -> {mapped_emotion}")  # Add mapping log
-    return mapped_emotion
 
-def retry_emotion_prediction(text: str, labels: list, client, model: str, temperature: float, seed: int) -> dict:
+def retry_emotion_prediction(text: str, labels: list, client, model: str, temperature: float, seed: int, cfg: dict) -> dict:
     """Retry emotion prediction attempt"""
     # 특정 모델들은 function calling을 지원하지 않음
-    no_function_call_models = [
-        "hf.co/tensorblock/emotion-llama-gguf",
-        "sebdg/emotional_llama",
-        "deepseek-r1"
-    ]
+
     
-    use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
+    use_function_call = any(model_name.lower() in model.lower() for model_name in cfg.prompt.function_call_models)
     
     try:
-        if use_function_call:
+        if use_function_call and cfg.model.function_calling:
             tools = [{
                 "type": "function",
                 "function": {
@@ -277,7 +249,7 @@ def retry_emotion_prediction(text: str, labels: list, client, model: str, temper
     
     return {"emotion": "unknown", "confidence_score": 0.0, "explanation": "Failed to get valid prediction"}
 
-def load_data(cfg):
+def load_data(cfg, logger=None):
     dataset_cfg = cfg.data.datasets[cfg.data.name]
     labels = dataset_cfg.labels
     df = pd.read_csv(
@@ -441,8 +413,8 @@ def load_data(cfg):
     # Combine log messages into a single string
     log_message = "\n".join(log_messages)
     
-    # Log to file (assuming logger is set up after main function is called)
-    if 'logger' in globals():
+    # Log to file
+    if logger:
         safe_log(logger, 'info', log_message)
     else:
         print(log_message)
@@ -513,80 +485,80 @@ def clean_json_response(response_text: str) -> str:
             "explanation": f"Error processing response: {str(e)}"
         }, ensure_ascii=False)
 
-def validate_prompt_template(template: str) -> bool:
-    """Validate prompt template format"""
-    required_sections = ['Emotion Definitions', 'Output Format']
-    return all(section in template for section in required_sections)
 
-def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, llm=None, logger=None, rag=None, tools=None) -> dict:
+def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, logger=None, rag=None, tools=None, count=0) -> dict:
     """Get model response with RAG or template"""
-    global _PROMPT_LOGGED  # 전역 변수 선언 추가
+    global _PROMPT_LOGGED
+  
+    final_prompt = ""  # 초기화 추가
+    template = ""      # 초기화 추가
     
     try:
-        if cfg.model.use_rag and rag:
-            # RAG 사용 시
-            similar_examples = rag.get_similar_examples(text, k=cfg.rag.k_examples)
-            final_prompt = str(rag.get_rag_prompt(text, similar_examples))
-            if logger:
-                logger.debug(f"Using RAG prompt with {cfg.rag.k_examples} examples")
-        elif cfg.model.use_template:
-            # Template 사용 시
+        # RAG 프롬프트 처리
+        # 템플릿 프롬프트 처리
+     
+        try:
             template_name = cfg.model.template
-            template = getattr(cfg.prompt, template_name)
-            final_prompt = f"{template}\n\nText: {text}"
+            
             if logger:
-                logger.debug(f"Using template: {template_name}")
-        else:
-            # 둘 다 사용하지 않을 때
-            final_prompt = f"Classify the emotion in this text as one of: {', '.join(labels)}\n\nText: {text}"
-        if logger:
-                logger.debug("Using basic prompt")
+                logger.debug("Using template: {}".format(template_name))
 
-        # Log complete prompt only once with actual input
-        if logger and not _PROMPT_LOGGED:
-            log_separator = "="*80
-            input_log = f"""
-{log_separator}
-[Initial Sample] Complete Prompt with Input
-{log_separator}
-{final_prompt}
-{log_separator}
-"""
-            safe_log(logger, 'info', input_log)
-            _PROMPT_LOGGED = True
+            if template_name == "rag_prompt":
+                try:
+                    if rag is None:
+                        raise ValueError("RAG is enabled but rag object is None")
+                    similar_examples = rag.get_similar_examples(
+                        text, 
+                        k=cfg.rag.k_examples, 
+                        threshold=cfg.rag.threshold
+                    )
+                    final_prompt = str(rag.get_rag_prompt(text, similar_examples))
+                    if logger:
+                        logger.debug(f"Using RAG prompt with {len(similar_examples)} examples (threshold: {cfg.rag.threshold})")
+                except Exception as e:
+                    if logger:
+                        logger.error("Error in RAG processing: {}".format(str(e)))
+            else:
+                template = getattr(cfg.prompt, template_name)
+                final_prompt = template
+        except Exception as e:
+            if logger:
+                logger.error("Error in template processing: {}".format(str(e)))
+            # 템플릿 실패 시 기본 프롬프트로 폴백
+            # template = "basic_prompt"
+            # final_prompt = "Classify the emotion in this text as one of: {}\n\nText: {}".format(', '.join(labels), text)
 
+        
+        # 최종 프롬프트 구성
+        final_prompt = "{}\n\nText: {}".format(final_prompt, text)
+        
+        # 로깅 처리
+        if logger and count == 0:
+            try:
+                safe_prompt = final_prompt.encode('ascii', errors='replace').decode('ascii')
+                logger.debug("Using prompt: \n{}".format(safe_prompt))
+            
+            except Exception as e:
+                logger.error("Error logging prompt: {}".format(str(e)))
+
+        # 모델 응답 처리
         try:
             if cfg.model.type == "ollama":
-                response = llm.invoke(final_prompt)
+                response = client.invoke(final_prompt)
             elif cfg.model.type == "anthropic":
                 response = client.messages.create(
                     model=model,
                     max_tokens=cfg.model.max_tokens,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": final_prompt
-                        }
-                    ],
+                    messages=[{"role": "user", "content": final_prompt}],
                     temperature=temperature
                 )
                 response = response.content[0].text
             else:
-                # OpenAI, Upstage, etc. use chat completion
-                messages = [
-                    {"role": "system", "content": final_prompt}
-                ]
+                messages = [{"role": "system", "content": final_prompt}]
+                use_function_call = any(model_name.lower() in model.lower() 
+                                      for model_name in cfg.prompt.function_call_models)
                 
-                # 특정 모델들은 function calling을 지원하지 않음
-                no_function_call_models = [
-                    "hf.co/tensorblock/emotion-llama-gguf",
-                    "sebdg/emotional_llama",
-                    "deepseek-r1"
-                ]
-                
-                use_function_call = not any(model_name.lower() in model.lower() for model_name in no_function_call_models)
-                
-                if use_function_call:
+                if use_function_call and cfg.model.function_calling:
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
@@ -594,164 +566,113 @@ def get_model_response(text: str, labels: list, client, model: str, temperature:
                         tools=tools,
                         seed=int(cfg.general.seed)
                     )
-                    # Function calling response handling
                     if response.choices[0].message.tool_calls:
                         tool_call = response.choices[0].message.tool_calls[0]
                         result = json.loads(tool_call.function.arguments)
                         if logger:
-                            logger.debug(f"Function call result: {result}")
-                        return result
+                            try:
+                                logger.debug("Function call result: {}".format(
+                                    json.dumps(result, ensure_ascii=True, indent=2)
+                                ))
+                            except Exception as e:
+                                logger.error("Error logging function call result: {}".format(str(e)))
+                        return result, final_prompt
                 else:
-                    # General response without function calling
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
                         temperature=temperature
                     )
-                response = response.choices[0].message.content
+                    response = response.choices[0].message.content
 
-            # JSON parsing
+            # 응답 파싱 및 검증
+            if logger:
+                try:
+                    safe_response = str(response).encode('ascii', errors='replace').decode('ascii')
+                    logger.debug("Raw response: \n{}".format(safe_response))
+                except Exception as e:
+                    logger.error("Error logging response: {}".format(str(e)))
+                    
             result = clean_json_response(response)
             if isinstance(result, str):
                 result = json.loads(result)
 
-            # 파싱된 결과가 필수 필드를 포함하는지 확인
+            # 결과 검증
             required_fields = ["emotion", "confidence_score", "explanation"]
             if not all(field in result for field in required_fields):
                 if logger:
                     logger.warning("Missing required fields in response, retrying with structured prompt...")
-                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
+                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed), cfg), final_prompt
 
             if result["emotion"] not in labels:
                 if logger:
-                    logger.warning(f"Invalid emotion label '{result['emotion']}', retrying with structured prompt...")
-                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
+                    logger.warning("Invalid emotion label '{}', retrying with structured prompt...".format(
+                        str(result["emotion"]).encode('ascii', errors='replace').decode('ascii')
+                    ))
+                return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed), cfg), final_prompt
 
-            return result
+            return result, final_prompt
 
         except json.JSONDecodeError:
             if logger:
                 logger.warning("JSON parsing failed, retrying with structured prompt...")
-            # JSON 파싱 실패 시 retry
-            return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
+            return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed), cfg), final_prompt
 
         except Exception as e:
             if logger:
-                logger.error(f"Error generating response: {e}")
+                logger.error("Error generating response: {}".format(str(e)))
             raise
 
     except Exception as e:
         if logger:
-            logger.error(f"Error in get_model_response: {e}")
-        # 최종 실패 시 retry
-        return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed))
-
-def get_prompt(cfg, text: str, labels: list, model_name: str) -> str:
-    """Select and generate prompt template"""
-    if cfg.model.use_template:
-        # Select prompt based on model name
-        if 'llama' in model_name.lower():
-            template = cfg.prompt.llama
-        elif 'qwen' in model_name.lower():
-            template = cfg.prompt.qwen
-        else:
-            # Default prompt
-            template = cfg.prompt.target_prompt
-        return template
-    else:
-        return f"""Analyze the emotional content of the following text and classify it as one of: {', '.join(labels)}
-
-Text: {text}
-
-Provide your analysis in a structured format."""
-
-def save_prompt_response(text: str, prompt, response: dict, output_dir: Path, index: int):
-    """Save prompt and response as log"""
-    # Create logs folder inside output_dir
-    log_dir = output_dir / "logs"
-    log_dir.mkdir(exist_ok=True)
-    
-    # Convert prompt object to string
-    if hasattr(prompt, 'partial_variables'):
-        # For RAG prompt
-        prompt_str = prompt.partial_variables.get('context', str(prompt))
-    else:
-        # For general prompt
-        prompt_str = str(prompt)
-    
-    log_entry = {
-        "index": index,
-        "input_text": text,
-        "prompt": prompt_str,
-        "response": response
-    }
-    
-    log_file = log_dir / "prompt_response_log.jsonl"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-
-def format_prompt_for_display(prompt, text):
-    """Format prompt for better readability"""
-    output = "\n" + "="*50 + "\n"
-    output += "📝 PROMPT DETAILS\n" + "="*50 + "\n\n"
-    
-    # Input text
-    output += "📌 Input Text:\n"
-    output += f"{text}\n\n"
-    
-    # If RAG context is present
-    if hasattr(prompt, 'partial_variables') and 'context' in prompt.partial_variables:
-        context = prompt.partial_variables['context']
-        
-        # Extract similar examples
-        if "Similar examples for reference:" in context:
-            output += "🔍 Similar Examples:\n"
-            examples = context.split("Similar examples for reference:\n")[1].split("\nRemember")[0]
-            output += f"{examples}\n"
-        
-        # Extract guidelines
-        if "Remember to:" in context:
-            output += "📋 Guidelines:\n"
-            guidelines = context.split("Remember to:")[1].split("Format your response")[0]
-            output += f"{guidelines}\n"
-    
-    output += "-"*50 + "\n"
-    return output
+            logger.error("Error in get_model_response: {}".format(str(e)))
+        return retry_emotion_prediction(text, labels, client, model, temperature, int(cfg.general.seed), cfg), final_prompt
 
 class SafeStreamHandler(logging.StreamHandler):
     def __init__(self, stream=None):
         super().__init__(stream)
+        self.encoding = 'utf-8'
         if sys.platform == 'win32':
             if stream is None:
-                self.stream = codecs.getwriter('utf-8')(sys.stdout.buffer)
+                self.stream = codecs.getwriter('utf-8')(sys.stdout.buffer, errors='replace')
             elif hasattr(stream, 'buffer'):
-                self.stream = codecs.getwriter('utf-8')(stream.buffer)
+                self.stream = codecs.getwriter('utf-8')(stream.buffer, errors='replace')
+
+    def format(self, record):
+        """Format the specified record safely."""
+        try:
+            message = super().format(record)
+            if sys.platform == 'win32':
+                # Windows에서는 ASCII로 변환
+                return message.encode('ascii', errors='replace').decode('ascii')
+            return message
+        except Exception as e:
+            return f"Error formatting log message: {str(e)}"
 
     def emit(self, record):
+        """Emit a record safely."""
         try:
             msg = self.format(record)
+            stream = self.stream
+            
             try:
-                if sys.platform == 'win32' and hasattr(self.stream, 'buffer'):
-                    self.stream.buffer.write(msg.encode('utf-8'))
-                    self.stream.buffer.write(self.terminator.encode('utf-8'))
+                if isinstance(msg, str):
+                    stream.write(msg + self.terminator)
                 else:
-                    self.stream.write(msg)
-                    self.stream.write(self.terminator)
+                    stream.write(str(msg) + self.terminator)
                 self.flush()
-            except UnicodeEncodeError:
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                # 인코딩 에러 발생 시 ASCII로 변환 시도
                 try:
-                    safe_msg = msg.encode('utf-8', errors='replace').decode('utf-8')
-                    if sys.platform == 'win32' and hasattr(self.stream, 'buffer'):
-                        self.stream.buffer.write(safe_msg.encode('utf-8'))
-                        self.stream.buffer.write(self.terminator.encode('utf-8'))
-                    else:
-                        self.stream.write(safe_msg)
-                        self.stream.write(self.terminator)
+                    safe_msg = str(msg).encode('ascii', errors='replace').decode('ascii')
+                    stream.write(safe_msg + self.terminator)
                     self.flush()
-                except Exception:
-                    safe_msg = msg.encode('ascii', errors='replace').decode('ascii')
-                    sys.stderr.write(safe_msg + self.terminator)
-                    self.flush()
+                except Exception as e:
+                    sys.stderr.write(f"Severe logging error: {str(e)}\n")
+                    self.handleError(record)
+            except Exception as e:
+                sys.stderr.write(f"Logging error: {str(e)}\n")
+                self.handleError(record)
         except Exception:
             self.handleError(record)
 
@@ -773,18 +694,19 @@ def setup_logging(cfg, output_dir: Path):
 
     # Windows environment setup for UTF-8 output
     if sys.platform == 'win32':
+        import locale
+        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
 
     try:
         # File handler setup
-        log_file = log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='w')
         file_handler.setLevel(logging.DEBUG)
 
         # Console handler setup
         console_handler = SafeStreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)  # Limit to INFO level
+        console_handler.setLevel(logging.INFO)
         
         # Formatter setup
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -812,9 +734,6 @@ def safe_log(logger, level: str, message: str):
         if not isinstance(message, str):
             message = str(message)
         
-        # Convert special characters and Korean to ASCII (cannot convert characters with errors='ignore')
-        message = message.encode('ascii', errors='ignore').decode('ascii')
-        
         # Log message based on level
         log_func = getattr(logger, level)
         log_func(message)
@@ -822,7 +741,7 @@ def safe_log(logger, level: str, message: str):
     except Exception as e:
         # Log failure fallback to default output
         print(f"Logging failed: {str(e)}")
-        print(f"Original message: {message}")  # Print full message
+        print(f"Original message: {message}")
 
 def get_output_dir_name(model_name: str, cfg) -> str:
     """Create output folder name based on settings"""
@@ -830,45 +749,43 @@ def get_output_dir_name(model_name: str, cfg) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name_parts = [timestamp, model_name]
     
-    # Add template name if use_template is True
-    if cfg.model.use_template:
-        template_name = str(cfg.model.template)
-        if isinstance(template_name, str) and template_name.startswith("${prompt."):
-            # Extract the actual template name from the reference
-            template_name = template_name.split("${prompt.")[1].rstrip("}")
-        name_parts.append(template_name)
+ 
+    template_name = str(cfg.model.template)
+    if isinstance(template_name, str) and template_name.startswith("${prompt."):
+        # Extract the actual template name from the reference
+        template_name = template_name.split("${prompt.")[1].rstrip("}")
+    name_parts.append(template_name)
     
-    # Add RAG if enabled
-    if cfg.model.use_rag:
-        name_parts.append("rag")
+    # # Add RAG if enabled
+    # if cfg.model.use_rag:
+    #     name_parts.append("rag")
     
-    # Add function calling if enabled
-    if cfg.model.function_calling:
-        name_parts.append("function_calling")
+    # # Add function calling if enabled
+    # if cfg.model.function_calling:
+    #     name_parts.append("function_calling")
     
     return "_".join(name_parts)
 
 def initialize_models(cfg):
     """Initialize LLM and RAG model"""
-    llm = None
-    rag = None
+    client = None
     
     if cfg.model.type == "ollama":
-        llm = OllamaLLM(
+        client = OllamaLLM(
             model=cfg.model.name,
             temperature=cfg.model.temperature
         )
     elif cfg.model.type == "openai":
         base_url = "https://api.openai.com/v1"
         api_key = os.getenv("OPENAI_API_KEY")
-        llm = OpenAI(
+        client = OpenAI(
             base_url=base_url,
             api_key=api_key
         )
     elif cfg.model.type == "upstage":
         base_url = "https://api.upstage.ai/v1/solar"
         api_key = os.getenv("UPSTAGE_API_KEY")
-        llm = OpenAI(
+        client = OpenAI(
             base_url=base_url,
             api_key=api_key
         )
@@ -876,12 +793,10 @@ def initialize_models(cfg):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-        llm = Anthropic(api_key=api_key)
+        client = Anthropic(api_key=api_key)
     
-    if cfg.model.use_rag:
-        rag = EmotionRAG(cfg)
-    
-    return llm, rag
+
+    return client
 
 def sanitize_model_name(model_name: str) -> str:
     """Clean model name for use as file name"""
@@ -893,16 +808,14 @@ def main(cfg):
     global _INPUT_LOGGED
     
     # Initialize models
-    llm, rag = initialize_models(cfg)
+    client = initialize_models(cfg)
     
     # Convert config values to Python basic types first
-    model_type = str(cfg.model.type)
     model = str(cfg.model.name)
     temperature = float(cfg.model.temperature)
     
     # Set up output directory first
     model_name = sanitize_model_name(model)
-    print(f"Using sanitized model name: {model_name}")
     
     output_dir_name = get_output_dir_name(model_name, cfg)
     output_dir = Path('outputs') / output_dir_name
@@ -914,58 +827,21 @@ def main(cfg):
     # Now setup logging with the created output directory
     logger = setup_logging(cfg, output_dir)
     
-    # Get template based on model configuration
-    if cfg.model.use_template:
-        model_key = model.lower()
-        template = cfg.model_templates.get(model_key, cfg.prompt.template_default)
-    else:
-        template = cfg.prompt.emotion
-    
     # 데이터 로딩 및 전처리
-    df_isear, labels = load_data(cfg)
+    df_isear, labels = load_data(cfg, logger)
     labels = list(map(str, labels))
     
     # Set n_samples
     n_samples = len(df_isear) if cfg.data.n_samples == -1 else min(cfg.data.n_samples, len(df_isear))
-    print(f"Processing {n_samples} samples out of {len(df_isear)} total samples")
+    logger.info(f"Using sanitized model name: {model_name}")
+    logger.info(f"Processing {n_samples} samples out of {len(df_isear)} total samples")
     
     # Select first n_samples
     df_isear = df_isear.head(n_samples)
     
     # Set output file path (directory already created)
     output_path = Path(cfg.general.output_path) / f'dataset-{cfg.data.name}_model-{model_name}.csv'
-
-    # Initialize client
-    if model_type == "openai":
-        base_url = "https://api.openai.com/v1"
-        api_key = os.getenv("OPENAI_API_KEY")
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "upstage":
-        base_url = "https://api.upstage.ai/v1/solar"
-        api_key = os.getenv("UPSTAGE_API_KEY")
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "ollama":
-        base_url = "http://localhost:11434/v1"
-        api_key = "ollama"
-        client = OpenAI(
-            base_url=base_url,
-            api_key=api_key  
-        )
-    elif model_type == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
-        client = Anthropic(api_key=api_key)
-        print("Anthropic Claude model initialized")
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-
+    
     # Function calling tool definition
     tools = [
         {
@@ -977,7 +853,7 @@ def main(cfg):
                     "properties": {
                         "emotion": {
                             "type": "string",
-                            "enum": list(labels),  # Explicitly convert to list
+                            "enum": list(labels),
                             "description": f"Classify the emotion of the text as one of given labels: {', '.join(labels)}"
                         },
                         "confidence_score": {
@@ -1003,14 +879,23 @@ def main(cfg):
         "by_true_label": {str(label): 0 for label in labels}
     }
 
-    # Initialize RAG (use_rag is true)
+    # Initialize RAG
     rag = None
-    if cfg.model.use_rag:
-        rag = EmotionRAG(cfg)
-        rag.create_index(df_isear)
+    try:
+        if cfg.model.template == "rag_prompt":
+            logger.info("Initializing RAG...")
+            try:
+                rag = EmotionRAG(cfg)
+                rag.create_index(df_isear)
+                logger.info("RAG initialization completed")
+            except Exception as e:
+                logger.error(f"Error initializing RAG: {str(e)}")
+                logger.warning("Continuing without RAG...")
+    except Exception as e:
+        logger.error(f"Error initializing RAG: {str(e)}")
+        logger.warning("Continuing without RAG...")
 
     # 데이터 정제 후에 tqdm을 사용하도록 수정
-    df_isear = df_isear.head(n_samples)  # 정제된 데이터에서 샘플링
     total_samples = len(df_isear)  # 실제 처리할 샘플 수
     
     # 로깅을 위한 구분자 정의
@@ -1021,17 +906,17 @@ def main(cfg):
             if rag:
                 rag.exclude_index(index)
                 
-            result = get_model_response(
+            result, _= get_model_response(
                 str(row.text),
                 labels,
                 client,
                 model,
                 temperature,
                 cfg,
-                llm=llm,
                 logger=logger,
                 rag=rag,
-                tools=tools
+                tools=tools,
+                count=index
             )
             
             # 예측 결과 저장
@@ -1058,16 +943,15 @@ Explanation: {str(result.get('explanation', '')).encode('ascii', errors='ignore'
                 input_log = f"""
 {log_separator}
 [Initial Sample] Prompt Details
-{log_separator}
-Raw Prompt Template:
-{str(template).encode('ascii', errors='ignore').decode('ascii')}
-{log_separator}
+
 """
                 safe_log(logger, 'debug', input_log)
                 _INPUT_LOGGED = True
 
             if index % 500 == 0:
                 df_isear.to_csv(output_path, index=False)
+
+                
 
         except Exception as e:
             print(f"Error processing row {index}: {e}")
