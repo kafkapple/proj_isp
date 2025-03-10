@@ -97,16 +97,17 @@ class EmotionRAG:
             with open(db_file, 'wb') as f:
                 pickle.dump(self.vectorstore, f)
     
-    def get_similar_examples(self, query: str, k: int = 3, threshold: float = 0.5) -> list:
+    def get_similar_examples(self, query: str, query_emotion: str = None, k: int = 3, threshold: float = 0.5) -> list:
         """유사한 예제 검색"""
         if not self.vectorstore:
             raise ValueError("Vector store not initialized. Call create_index first.")
             
         print(f"\n=== RAG Search Debug ===")
         print(f"Query: {query}")
+        print(f"Query emotion: {query_emotion}")
         print(f"k: {k}")
         print(f"threshold: {threshold}")
-        print(f"Excluded indices: {len(self.exclude_indices)}")
+        print(f"Excluded indices: {self.exclude_indices}")
             
         # 먼저 필터 없이 검색
         try:
@@ -116,12 +117,23 @@ class EmotionRAG:
             
             # 필터링된 결과
             filtered_results = []
+            search_results = []  # CSV 저장용 결과
+            
             for doc, score in docs_and_scores:
                 doc_index = doc.metadata.get('index')
                 # 점수가 임계값보다 높고, 제외 인덱스에 없는 경우만 포함
                 if score >= threshold and doc_index not in self.exclude_indices:
                     filtered_results.append((doc, score))
-               
+                    # CSV 저장용 결과 추가
+                    search_results.append({
+                        'query_text': query,
+                        'query_emotion': query_emotion,
+                        'similar_text': doc.page_content,
+                        'retrieved_emotion': doc.metadata.get('emotion', ''),
+                        'similarity_score': score,
+                        'index': doc_index,
+                        'emotion_match': 1 if query_emotion == doc.metadata.get('emotion', '') else 0
+                    })
             
             print(f"Initial results: {len(docs_and_scores)}")
             print(f"Filtered results: {len(filtered_results)}")
@@ -129,7 +141,19 @@ class EmotionRAG:
                 print(f"Initial score range: {min(score for _, score in docs_and_scores):.3f} - {max(score for _, score in docs_and_scores):.3f}")
             if filtered_results:
                 print(f"Filtered score range: {min(score for _, score in filtered_results):.3f} - {max(score for _, score in filtered_results):.3f}")
+                
+                # 감정 클래스 일치 분석
+                if query_emotion:
+                    matches = sum(1 for doc, _ in filtered_results[:k] if doc.metadata.get('emotion') == query_emotion)
+                    print(f"Emotion class match rate: {matches/len(filtered_results[:k]):.2%}")
+                    
             print("=== End RAG Search Debug ===\n")
+            
+            # 검색 결과 저장
+            if hasattr(self, 'search_results'):
+                self.search_results.extend(search_results[:k])
+            else:
+                self.search_results = search_results[:k]
             
             return filtered_results[:k]
             
@@ -137,8 +161,85 @@ class EmotionRAG:
             print(f"Error in similarity search: {str(e)}")
             return []
 
-      
-    
+    def analyze_retrieval_performance(self, output_dir: str):
+        """검색 결과의 감정 클래스 매칭 분석"""
+        if not hasattr(self, 'search_results') or not self.search_results:
+            print("No search results available for analysis")
+            return None
+            
+        import pandas as pd
+        import numpy as np
+        
+        try:
+            df = pd.DataFrame(self.search_results)
+            
+            # 전체 검색 성능 분석
+            total_matches = df['emotion_match'].sum()
+            total_queries = len(df['query_text'].unique())
+            total_retrievals = len(df)
+            
+            # 클래스별 성능 분석
+            class_performance = {}
+            for emotion in df['query_emotion'].unique():
+                emotion_df = df[df['query_emotion'] == emotion]
+                matches = emotion_df['emotion_match'].sum()
+                total = len(emotion_df)
+                accuracy = matches / total if total > 0 else 0
+                
+                class_performance[emotion] = {
+                    'total_queries': len(emotion_df['query_text'].unique()),
+                    'total_retrievals': total,
+                    'correct_matches': matches,
+                    'accuracy': accuracy
+                }
+            
+            # 결과 저장
+            performance_stats = {
+                'overall': {
+                    'total_queries': total_queries,
+                    'total_retrievals': total_retrievals,
+                    'correct_matches': total_matches,
+                    'accuracy': total_matches / total_retrievals if total_retrievals > 0 else 0
+                },
+                'by_class': class_performance
+            }
+            
+            # 통계 저장
+            import json
+            stats_path = Path(output_dir) / 'rag_retrieval_stats.json'
+            with open(stats_path, 'w') as f:
+                json.dump(performance_stats, f, indent=2)
+                
+            # 상세 분석 결과 출력
+            print("\nRAG Retrieval Performance Analysis")
+            print("="*50)
+            print(f"Overall accuracy: {performance_stats['overall']['accuracy']:.2%}")
+            print(f"Total queries: {total_queries}")
+            print(f"Total retrievals: {total_retrievals}")
+            print("\nClass-wise Performance:")
+            for emotion, stats in class_performance.items():
+                print(f"\n{emotion}:")
+                print(f"  Accuracy: {stats['accuracy']:.2%}")
+                print(f"  Queries: {stats['total_queries']}")
+                print(f"  Retrievals: {stats['total_retrievals']}")
+                print(f"  Correct matches: {stats['correct_matches']}")
+                
+            return performance_stats
+            
+        except Exception as e:
+            print(f"Error analyzing retrieval performance: {str(e)}")
+            return None
+
+    def save_search_results(self, output_path: str):
+        """검색 결과를 CSV 파일로 저장"""
+        if hasattr(self, 'search_results') and self.search_results:
+            import pandas as pd
+            df = pd.DataFrame(self.search_results)
+            df.to_csv(output_path, index=False, encoding='utf-8')
+            print(f"Saved search results to {output_path}")
+            # 저장 후 초기화
+            self.search_results = []
+
     def get_rag_prompt(self, query: str, similar_examples: list) -> str:
         """RAG 프롬프트 생성"""
         try:

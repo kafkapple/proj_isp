@@ -77,7 +77,7 @@ def get_output_dir_name(model_name: str, cfg) -> str:
     return "_".join(name_parts)
 
 
-def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, logger=None, rag=None, tools=None, count=0) -> dict:
+def get_model_response(text: str, labels: list, client, model: str, temperature: float, cfg, logger=None, rag=None, similar_examples=None, tools=None, count=0) -> dict:
     """Get model response with RAG or template"""
     global _PROMPT_LOGGED
   
@@ -96,11 +96,8 @@ def get_model_response(text: str, labels: list, client, model: str, temperature:
                 try:
                     if rag is None:
                         raise ValueError("RAG is enabled but rag object is None")
-                    similar_examples = rag.get_similar_examples(
-                        text, 
-                        k=cfg.rag.k_examples, 
-                        threshold=cfg.rag.threshold
-                    )
+                    if similar_examples is None:
+                        raise ValueError("similar_examples is None")
                     final_prompt = str(rag.get_rag_prompt(text, similar_examples))
                     if logger:
                         logger.debug(f"Using RAG prompt with {len(similar_examples)} examples (threshold: {cfg.rag.threshold})")
@@ -361,6 +358,7 @@ def main(cfg):
     try:
         if cfg.model.template == "rag_prompt":
             logger.info("Initializing RAG...")
+            logger.info(f"RAG Embeding Model: {cfg.model.embedding_model}")
             try:
                 rag = EmotionRAG(cfg)
                 rag.create_index(df_isear)
@@ -378,12 +376,21 @@ def main(cfg):
     # 로깅을 위한 구분자 정의
     log_separator = "="*80
     
-    for index, row in tqdm(df_isear.iterrows(), total=n_samples):
+    for index, row in tqdm(df_isear.iterrows(), total=total_samples):
         try:
+            similar_examples = None
             if rag:
                 rag.exclude_index(index)
-                
-            result, _= get_model_response(
+                similar_examples = rag.get_similar_examples(
+                    str(row.text),
+                    query_emotion=str(row.emotion),
+                    k=cfg.rag.k_examples,
+                    threshold=cfg.rag.threshold
+                )
+                if logger:
+                    logger.debug(f"Using RAG prompt with {len(similar_examples)} examples (threshold: {cfg.rag.threshold})")
+
+            result, _ = get_model_response(
                 str(row.text),
                 labels,
                 client,
@@ -392,6 +399,7 @@ def main(cfg):
                 cfg,
                 logger=logger,
                 rag=rag,
+                similar_examples=similar_examples,
                 tools=tools,
                 count=index
             )
@@ -447,12 +455,15 @@ Error: {str(e)}
 
     # Final result save
     df_isear.to_csv(output_path, index=False)
-    df_misclassified = df_isear.loc[ df_isear['emotion'] != df_isear[f'predicted_emotion_{model_name}'], f'predicted_emotion_{model_name}'] 
-    df_misclassified = df_isear.iloc[df_misclassified.index,:]
+    
+    # 잘못 분류된 샘플 찾기
+    mask = df_isear['emotion'] != df_isear[f'predicted_emotion_{model_name}']
+    df_misclassified = df_isear[mask].copy()
     df_misclassified.sort_values(by='emotion', ascending=False, inplace=True)
-    misclassified_counts = df_misclassified.value_counts('emotion')
+    misclassified_counts = df_misclassified['emotion'].value_counts()
     logger.info(misclassified_counts)
 
+    # Save misclassified samples
     df_misclassified.to_csv(output_dir / f'misclassified_samples_{model_name}.csv', index=False)
 
     # Save invalid prediction statistics
@@ -474,7 +485,35 @@ Error: {str(e)}
     
     # Calculate and save evaluation metrics
     report, cm = save_metrics(df_isear, cfg, model_name, output_dir)
-    
+
+    # Save RAG search results and analyze performance if available
+    if rag and hasattr(rag, 'search_results'):
+        # Save search results
+        rag_results_path = output_dir / f'rag_search_results_{model_name}.csv'
+        rag.save_search_results(str(rag_results_path))
+        logger.info(f"Saved RAG search results to {rag_results_path}")
+        
+        # Analyze retrieval performance
+        rag_stats = rag.analyze_retrieval_performance(output_dir)
+        
+        # Add RAG performance to final log if stats are available
+        if rag_stats:
+            rag_log = "\n4. RAG Retrieval Performance:"
+            rag_log += f"\n- Overall accuracy: {rag_stats['overall']['accuracy']:.2%}"
+            rag_log += f"\n- Total queries: {rag_stats['overall']['total_queries']}"
+            rag_log += f"\n- Total retrievals: {rag_stats['overall']['total_retrievals']}"
+            rag_log += "\n\nClass-wise RAG Performance:"
+            for emotion, stats in rag_stats['by_class'].items():
+                rag_log += f"\n{emotion}:"
+                rag_log += f"\n  - Accuracy: {stats['accuracy']:.2%}"
+                rag_log += f"\n  - Queries: {stats['total_queries']}"
+                rag_log += f"\n  - Correct matches: {stats['correct_matches']}"
+        else:
+            logger.warning("No RAG statistics available for analysis")
+            rag_log = "\n4. RAG Retrieval Performance: No data available"
+    else:
+        rag_log = ""
+
     # Final results log creation
     final_log = f"""
 {'='*80}
@@ -499,6 +538,7 @@ Error: {str(e)}
   - Recall: {metrics['recall']:.4f}
   - F1 Score: {metrics['f1-score']:.4f}"""
 
+    final_log += rag_log
     final_log += f"\n{'='*80}\n"
     
     # Log to file
