@@ -13,6 +13,7 @@ models/
 data/
 .DS_Store/
 
+_backup/
 ! src/models/
 ! src/data/
 

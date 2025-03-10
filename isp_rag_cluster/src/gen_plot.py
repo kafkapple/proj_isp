@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-def plot_grouped_bar_chart(csv_path, save_path="model_comparison.png"):
+def plot_grouped_bar_chart(csv_path, save_path="model_comparison"):
     """
     CSV 파일을 읽고, 각 모델별로 프롬프트 타입과 메트릭(precision, recall, f1-score)을 
     비교하는 2x2 subplot 형태의 grouped bar chart를 생성 및 저장하는 함수.
@@ -109,8 +109,6 @@ def plot_grouped_bar_chart(csv_path, save_path="model_comparison.png"):
     plt.tight_layout(pad=2.0, w_pad=1.5, h_pad=2.0)
     
     # 저장
-    plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.2)
+    plt.savefig(f"{save_path}.png", dpi=300, bbox_inches='tight', pad_inches=0.2)
     plt.close()
 
-# 사용 예시
-plot_grouped_bar_chart("result2.csv", "grouped_bar_chart3.png")

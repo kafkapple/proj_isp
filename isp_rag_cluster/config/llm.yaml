@@ -10,9 +10,10 @@ general:
     save_responses: true  # Whether to save responses
     log_path: 'logs'  # Log save path
     log_level: 'DEBUG'  # Log level setting
+    log_interval: 500
 data:
   name: "isear"  # Dataset name (isear, custom, etc.)
-  n_samples: -1 #10 #100 # Number of samples to use (-1 for all)
+  n_samples: 10 #100 # Number of samples to use (-1 for all)
   default_emotion: "unknown"
   train_size: 0.8
   val_size: 0.2
@@ -28,9 +29,7 @@ data:
       path: 'data/isear/isear.csv'
       labels: ['joy', 'fear', 'anger', 'sadness', 'disgust', 'shame', 'guilt']
       
-      # emotions:
-      #   # 1-7 in order of emotion classes
-      #   classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+
   exclude_length: 77
   exclude_phrases:
     - "no response"
@@ -44,7 +43,7 @@ data:
     - "blank"
 model:
   type: "ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
-  name: "qwen2.5" #"llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
+  name: "qwen2.5:3b" #"llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
   #claude-3-5-sonnet-20241022
   #'gpt-4o' 
    #"deepseek-r1" #
@@ -52,13 +51,13 @@ model:
   max_tokens: 100 #200
   temperature: 0.1 #0.3
   # use_template: true #true
-  template: custom_prompt #zero_shot_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
+  template: baseline_prompt #rag_prompt #custom_prompt #zero_shot_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
   # use_rag: false #false
   function_calling: false
 rag:
   k_examples: 7
   threshold: 0.1
-  embedding_model: "BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_model: "j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" #"BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
   db_path: "data/vector_db"  # Vector DB save base path
   save_db: true  # Whether to save DB
   load_db: true  # Whether to load existing DB
@@ -298,7 +297,6 @@ prompt:
       "explanation": "brief_explanation"
     }
     
-  
 
   # Enhanced emotion prompt with examples
   emotion_fewshot_simple: &emotion_fewshot_simple |
@@ -582,16 +580,4 @@ model_templates:
   "deepseek-r1": *blank_prompt
   "hf.co/tensorblock/Emotion-LLaMA-GGUF": *blank_prompt
 
-# # Model prompt mapping
-# qwen2.5: *emotion_fewshot
-# llama3.2: *emotion_fewshot
-# emotion-llama: *emotion_fewshot
-# emotion-qwen: *emotion_fewshot
-# gpt-3.5-turbo: *emotion_prompt
-# solar-1-mini-chat: *emotion_prompt #*emotion_fewshot
-# claude-3-sonnet-20240229: *emotion_prompt #*emotion_fewshot  # Update model name mapping
-# hf.co/tensorblock/Emotion-LLaMA-GGUF: *emotion_fewshot # *emotion_fewshot
-# sebdg/emotional_llama: *emotion_fewshot
-# deepseek-r1: *emotion_fewshot
-# gemma2: *emotion_fewshot
 

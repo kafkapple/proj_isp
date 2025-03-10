@@ -59,7 +59,10 @@ class EmotionRAG:
     
     def create_index(self, df):
         """벡터 DB 생성 또는 로드"""
-        db_file = self.db_path / f"{self.cfg.data.name}_vectorstore.pkl"
+        embedding_model = str(self.cfg.rag.embedding_model)
+        embedding_model = embedding_model.split("/")[-1]
+
+        db_file = self.db_path / f"{self.cfg.data.name}_{embedding_model}_vectorstore.pkl"
         
         # 기존 DB 로드 시도
         if self.cfg.rag.load_db and db_file.exists():
