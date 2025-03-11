@@ -358,7 +358,7 @@ def main(cfg):
     try:
         if cfg.model.template == "rag_prompt":
             logger.info("Initializing RAG...")
-            logger.info(f"RAG Embeding Model: {cfg.model.embedding_model}")
+            logger.info(f"RAG Embeding Model: {cfg.rag.embedding_model}")
             try:
                 rag = EmotionRAG(cfg)
                 rag.create_index(df_isear)

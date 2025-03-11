@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import dataframe_image as dfi
 
+
+prompt_types = ['baseline_prompt', 'zero_shot_prompt', 'few_shot_prompt',   'custom_prompt', 'rag_prompt']
 def highlight_max(s, style='bold'):
     """Series에서 최대값에 대해 스타일 지정 (bold 또는 background-color)"""
     is_max = s == s.max()
@@ -18,18 +20,36 @@ def format_number(value, round_digits=1):
         return value
     return round(float(value), round_digits)
 
-def gen_table(csv_dir = "./data/classification_reports", output_name = "classification_table", round_digits = 0):
+def gen_table(csv_dir = "./data/classification_reports", output_name = "classification_table", round_digits = 0, 
+             name_mapping = None):
+    """
+    name_mapping: dict, optional
+        모델명과 프롬프트 타입을 변경하기 위한 매핑 딕셔너리
+        예: {'qwen2.5_3b': 'Qwen 2.5', 'baseline_prompt': 'Baseline'}
+    """
     # 폴더 내 CSV 파일 순회
     all_data = []
     for file_name in os.listdir(csv_dir):
         if file_name.endswith(".csv"):
-            # 파일명에서 "classification_report_" 제거 후 남은 부분 파싱
+            # 파일명에서 "classification_report_" 제거
             base_name = file_name.replace("classification_report_", "").replace(".csv", "")
-            parts = base_name.split("_", 1)  # 첫 번째 언더바 기준으로 나눔
-            if len(parts) == 2:
-                model, prompt = parts[0], parts[1]
-            else:
-                model, prompt = parts[0], "unknown"
+            
+            # prompt_types 리스트를 활용하여 파싱
+            model = base_name
+            prompt = "unknown"
+            for pt in prompt_types:
+                if f"_{pt}" in base_name:
+                    parts = base_name.split(f"_{pt}")
+                    model = parts[0]
+                    prompt = pt
+                    break
+            
+            # 매핑 적용
+            if name_mapping:
+                model = name_mapping.get(model, model)
+                prompt = name_mapping.get(prompt, prompt)
+            
+            print(f"model: {model}, prompt: {prompt}")
             
             file_path = os.path.join(csv_dir, file_name)
             df = pd.read_csv(file_path)
@@ -68,7 +88,7 @@ def gen_table(csv_dir = "./data/classification_reports", output_name = "classifi
                 row_data[(cls, 'F1')] = f
             
             # Acc% (Macro F1)
-            row_data[('Acc%', '')] = format_number(macro_f1, round_digits)
+            #row_data[('Acc%', '')] = format_number(macro_f1, round_digits)
             all_data.append(row_data)
 
     # 통합 DataFrame 구성 (MultiIndex 컬럼)
@@ -90,6 +110,6 @@ def gen_table(csv_dir = "./data/classification_reports", output_name = "classifi
 
     # 최종 테이블을 이미지 파일로 저장
     dfi.export(styled_df, 
-             f"{output_name}.png",
+             output_name + ".png",
              dpi=600  # 해상도 증가
     )

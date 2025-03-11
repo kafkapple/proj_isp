@@ -13,7 +13,7 @@ general:
     log_interval: 500
 data:
   name: "isear"  # Dataset name (isear, custom, etc.)
-  n_samples: 10 #100 # Number of samples to use (-1 for all)
+  n_samples: -1 #100 # Number of samples to use (-1 for all)
   default_emotion: "unknown"
   # train_size: 0.8
   # val_size: 0.2
@@ -42,8 +42,8 @@ data:
     - "none"
     - "blank"
 model:
-  type: "ollama" #"anthropic" #"openai" #"upstage" #"anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
-  name: "llama3.2" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
+  type: "anthropic"  # "openai" / "ollama" / "upstage" / "anthropic"
+  name: "claude-3-5-sonnet-20241022" #"gpt-4o" #"llama3.1" #"hf.co/tensorblock/Emotion-LLaMA-GGUF" #"deepseek-r1" #"claude-3-5-sonnet-20241022" #"gpt-4o" #"solar-1-mini-chat" #"llama3.2" #"sebdg/emotional_llama" # #"solar-1-mini-chat" #"llama3.2" #"solar-1-mini-chat" # "claude-3-sonnet-20240229" #"llama3.2" #"qwen2.5" #"sebdg/emotional_llama" #"hf.co/tensorblock/Emotion-LLaMA-GGUF"  #"claude-3-sonnet-20240229"  # Update Claude 3 model name
   #claude-3-5-sonnet-20241022
   #'gpt-4o' 
    #"deepseek-r1" #
@@ -51,7 +51,7 @@ model:
   max_tokens: 100 #200
   temperature: 0.1 #0.3
   # use_template: true #true
-  template: rag_prompt #rag_prompt #custom_prompt #zero_shot_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
+  template: few_shot_prompt #rag_prompt #custom_prompt #zero_shot_prompt  #emotion_fewshot_simple #emotion_fewshot_simple #"emotion_fewshot_reverse"  # 앵커 이름을 직접 사용
   # use_rag: false #false
   function_calling: false
   function_call_models:
@@ -60,7 +60,7 @@ model:
 rag:
   k_examples: 7
   threshold: 0.1
-  embedding_model: "j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" #"BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_model: "bhadresh-savani/distilbert-base-uncased-emotion" #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" #"BAAI/bge-m3" # "sentence-transformers/all-MiniLM-L6-v2"
   db_path: "data/vector_db"  # Vector DB save base path
   save_db: true  # Whether to save DB
   load_db: true  # Whether to load existing DB
