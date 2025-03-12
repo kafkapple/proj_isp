@@ -8,9 +8,9 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-prompt_types = ['baseline_prompt', 'zero_shot_prompt', 'few_shot_prompt',  'custom_prompt',  'rag_prompt']
 
-def plot_grouped_bar_chart(csv_path, save_path="model_comparison", name_mapping=None, model_order=None):
+
+def plot_grouped_bar_chart(csv_path, save_path="model_comparison", name_mapping=None, model_order=None, prompt_order=None):
     """
     CSV 파일을 읽고, 각 모델별로 프롬프트 타입과 메트릭을 비교하는 grouped bar chart를 생성.
 
@@ -39,22 +39,31 @@ def plot_grouped_bar_chart(csv_path, save_path="model_comparison", name_mapping=
     
     # CSV 파일 읽기
     df = pd.read_csv(csv_path)
+    print(f"\nLoaded DataFrame from {csv_path}")
+    print("Original DataFrame:")
+    print(df)
     
     # 매핑 적용 전에 모델 순서 처리를 위한 원본 컬럼 저장
     df['original_model'] = df['model name']
+    df['original_template'] = df['template type']
     
     # 매핑 적용
     if name_mapping:
+        print("\nApplying name mapping...")
         df['model name'] = df['model name'].map(lambda x: name_mapping.get(x, x))
         df['template type'] = df['template type'].map(lambda x: name_mapping.get(x, x))
+        print("After mapping:")
+        print(df[['original_model', 'model name', 'original_template', 'template type']])
     
     df['model name'] = df['model name'].ffill()
     df = df.dropna(subset=['template type'])
 
     # 데이터 그룹화 및 모델 순서 적용
     if model_order:
+        print("\nApplying model order...")
         # 매핑된 이름으로 변환
         ordered_models = [name_mapping.get(m, m) if name_mapping else m for m in model_order]
+        print(f"Ordered models: {ordered_models}")
         # 지정된 순서에 있는 모델만 선택하고 순서 유지
         df = df[df['original_model'].isin(model_order)]
         df['model name'] = pd.Categorical(df['model name'], ordered_models, ordered=True)
@@ -63,28 +72,47 @@ def plot_grouped_bar_chart(csv_path, save_path="model_comparison", name_mapping=
     else:
         models = df['model name'].unique()
     
+    print("\nUnique models after ordering:")
+    print(models)
+    
     metrics = ['precision', 'recall', 'f1-score']
     
     # 프롬프트 타입 순서 지정 (매핑 적용)
-    template_types = [name_mapping.get(pt, pt) if name_mapping else pt for pt in prompt_types]
+    if prompt_order:
+        print("\nApplying prompt order...")
+        template_types = [name_mapping.get(pt, pt) if name_mapping else pt for pt in prompt_order]
+        print(f"Template types after mapping: {template_types}")
+        # 데이터프레임의 프롬프트 순서도 조정
+        df['template type'] = pd.Categorical(df['template type'], template_types, ordered=True)
+        df = df.sort_values(['model name', 'template type'])
+    else:
+        template_types = df['template type'].unique()
+    
+    print("\nFinal DataFrame after all ordering:")
+    print(df[['model name', 'template type', 'precision', 'recall', 'f1-score']])
     
     # subplot 레이아웃 계산
     n_models = len(models)
-    n_cols = 2  # 열은 2개로 고정
-    n_rows = (n_models + 1) // 2  # 모델 수에 따라 행 수 계산
+    n_cols = min(3, n_models)  # 최대 3열, 모델이 더 적으면 모델 수만큼
+    n_rows = (n_models + n_cols - 1) // n_cols  # 올림 나눗셈으로 필요한 행 수 계산
     
     # 그래프 생성
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 5*n_rows))
-    if n_rows == 1:
-        axes = np.array([axes])  # 1행인 경우 2D 배열로 변환
-    axes = axes.flatten()  # 2D 배열을 1D로 변환
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 5*n_rows))
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])  # 단일 subplot인 경우
+    elif n_rows == 1:
+        axes = np.array([axes])  # 1행인 경우
+    elif n_cols == 1:
+        axes = np.array([[ax] for ax in axes])  # 1열인 경우
     
     # 메트릭별 색상
     colors = sns.color_palette("Set2", n_colors=len(metrics))
     
     # 각 모델별 서브플롯
     for idx, model in enumerate(models):
-        ax = axes[idx]
+        row = idx // n_cols
+        col = idx % n_cols
+        ax = axes[row, col]
         
         x = np.arange(len(template_types))
         width = 0.25  # bar width
@@ -131,8 +159,10 @@ def plot_grouped_bar_chart(csv_path, save_path="model_comparison", name_mapping=
             ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0.)
     
     # 남은 서브플롯 제거
-    for idx in range(len(models), len(axes)):
-        axes[idx].remove()
+    for row in range(n_rows):
+        for col in range(n_cols):
+            if row * n_cols + col >= len(models):
+                axes[row, col].remove()
     
     # 레이아웃 조절
     plt.tight_layout(pad=2.0, w_pad=1.5, h_pad=2.0)
