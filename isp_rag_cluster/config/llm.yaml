@@ -60,7 +60,7 @@ model:
 rag:
   k_examples: 7
   threshold: 0.1
-  embedding_model: "BAAI/bge-m3"  #"bhadresh-savani/distilbert-base-uncased-emotion" #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" ## "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_model: "j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" # "sentence-transformers/all-MiniLM-L6-v2" #  #"j-hartmann/emotion-english-distilroberta-base" #"bhadresh-savani/distilbert-base-uncased-emotion" ## "sentence-transformers/all-MiniLM-L6-v2"
   db_path: "data/vector_db"  # Vector DB save base path
   save_db: true  # Whether to save DB
   load_db: true  # Whether to load existing DB
