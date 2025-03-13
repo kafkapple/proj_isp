@@ -123,13 +123,13 @@ if __name__ == "__main__":
     path_target = "./outputs/done_4"
     # 프롬프트 타입 리스트 (예시: 'rag_prompt' 외 필요시 추가)
     prompt_order = ['baseline_prompt', 'zero_shot_prompt', 'few_shot_prompt',  'custom_prompt',  'rag_prompt', 'rag_prompt-2-savani' ]
-    model_order = [ 'llama3.2', 'llama3.1','llama2_13b','qwen2.5_3b', 'qwen2.5', 'qwen2.5_14b', 'mistral', 'gemma','gpt-4o',  'claude-3-5-sonnet-20241022']
+    model_order = [ 'llama3.2', 'llama3.1','llama2_13b','qwen2.5_3b', 'qwen2.5', 'qwen2.5_14b', 'mistral', 'gemma','gemma3','gpt-4o',  'claude-3-5-sonnet-20241022']
     name_mapping = {
     'qwen2.5_3b': 'Qwen 2.5 3B',
     'qwen2.5': 'Qwen 2.5 7B',
     'qwen2.5_14b': 'Qwen 2.5 14B',
     'llama3.2': 'Llama 3.2 3B',
-    'llama3.1': 'Llama 3.1 7B',
+    'llama3.1': 'Llama 3.1 8B',
     'llama2_13b': 'Llama 2 13B',
     'mistral': 'Mistral 7B',
     'gemma3': 'Gemma3 4B',

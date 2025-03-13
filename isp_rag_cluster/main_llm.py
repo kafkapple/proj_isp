@@ -73,6 +73,9 @@ def get_output_dir_name(model_name: str, cfg) -> str:
         # Extract the actual template name from the reference
         template_name = template_name.split("${prompt.")[1].rstrip("}")
     name_parts.append(template_name)
+    if cfg.model.template == "rag_prompt":
+        sanitized_model_name = sanitize_model_name(cfg.rag.embedding_model)
+        name_parts.append(sanitized_model_name)
     
     return "_".join(name_parts)
 
@@ -290,6 +293,7 @@ def main(cfg):
     
     # Set up output directory first
     model_name = sanitize_model_name(model)
+    
     
     output_dir_name = get_output_dir_name(model_name, cfg)
     output_dir = Path('outputs') / output_dir_name
