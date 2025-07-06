@@ -1,0 +1,74 @@
+defaults:
+  - _self_
+  - dataset: ravdess
+  - train: train
+  - model: wav2vec
+
+general:
+  seed: 42
+  project: "emotion_recognition"
+  timestamp: ${now:%Y%m%d_%H%M%S}
+  hydra_cwd: ${hydra:runtime.cwd}
+  name: "emotion_recognition"
+
+debug:
+  enabled: false
+  fast_dev_run: false
+  n_samples: null  # 전체 데이터셋 사용
+  show_model_summary: true
+
+dirs:
+  outputs: outputs/${general.timestamp}
+  subdirs:
+    - checkpoints
+    - logs
+    - predictions
+
+wandb:
+  project: "emotion_recognition"
+  entity: "ailab_upstage_fastcampus"
+  name: "${general.timestamp}"
+  save_dir: ${dirs.outputs}/wandb
+  log_model: false  # 모델 체크포인트 저장 비활성화
+  exclude_files: ["*.ckpt", "*.pth", "*.pt"]  # 대용량 파일 제외
+  plots:
+    metrics:
+      - name: "Training Metrics"
+        metrics:
+          - "train/loss"
+          - "val/loss"
+        title: "Loss Curves"
+        x_axis: "step"
+      - name: "Learning Rates"
+        metrics:
+          - "train/lr_group0"  # frozen layers
+          - "train/lr_group1"  # unfrozen layers
+          - "train/lr_group2"  # classifier
+        title: "Learning Rate Schedule"
+        x_axis: "step"
+
+# logging 설정을 직접 포함
+logging:
+  show_model_summary: true
+  log_every_n_steps: 1  # 매 스텝마다 로깅
+  step_interval: 10  # 10 스텝마다 평균 계산
+  save_graph: true
+  metrics:
+    - "loss"
+    - "accuracy"
+    - "f1_score"
+    - "learning_rate"
+  
+  # 체크포인트 관련 설정도 로깅 아래로 이동
+  checkpoint:
+    monitor: "val/loss"
+    mode: "min"
+    save_top_k: 1  # best model만 저장
+    save_last: true  # 마지막 모델도 저장
+    filename_pattern: "best-{epoch:02d}-{val_loss:.4f}"
+    save_weights_only: true
+
+settings:
+  precision: ${train.precision}  # train.yaml의 설정 참조
+  accelerator: ${train.accelerator}
+  devices: ${train.devices}

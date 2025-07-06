@@ -1,0 +1,65 @@
+# 데이터셋 기본 설정
+root_dir: "data/ravdess"
+name: "ravdess"
+num_classes: 8
+split: "train"  # 기본값 설정
+
+# Split 설정 추가
+split_ratio:
+  train: 0.7
+  val: 0.15
+  test: 0.15
+
+class_names: [
+  "neutral",
+  "calm",
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgust",
+  "surprised"
+]
+
+# 클래스 가중치 설정
+class_weights:
+  neutral: 2.5
+  calm: 1.5
+  happy: 1.5
+  sad: 1.5
+  angry: 1.0
+  fearful: 1.0
+  disgust: 1.0
+  surprised: 1.0
+
+# 오디오 설정
+audio:
+  sample_rate: 16000
+  duration: 3.0
+  max_length: 48000
+  normalize: true
+  padding: "zero"
+  channels: 1
+
+# Augmentation 설정
+augmentation:
+  enabled: true
+  transforms:
+    noise:
+      enabled: true
+      noise_level: 0.008
+      noise_types: "gaussian"
+    volume:
+      enabled: true
+      min_gain: 0.75
+      max_gain: 1.25
+    pitch_shift:
+      enabled: false
+      steps: [-2, -1, 0, 1, 2]
+    time_stretch:
+      enabled: false
+      rates: [0.9, 0.95, 1.0, 1.05, 1.1]
+    spec_augment:
+      enabled: false
+      freq_mask_param: 20
+      time_mask_param: 20
