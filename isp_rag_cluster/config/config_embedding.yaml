@@ -1,0 +1,77 @@
+defaults:
+  - _self_
+
+general:
+  outputs: outputs/${now:%Y%m%d_%H%M%S}  # Default outputs path
+  random_state: 42
+
+data:
+  name: "isear"  # Dataset name (isear, custom, etc.)
+  csv_file: "isear.csv"  # File name to save
+  n_samples: -1 # Number of samples to use (-1 for all)
+  train_size: 0.8
+  val_size: 0.2
+  column_mapping:
+    text: "SIT"
+    emotion: "EMOT"
+  datasets:
+    isear:
+      urls:
+        - "https://raw.githubusercontent.com/sinmaniphel/py_isear_dataset/master/isear.csv"
+      required_columns: ["SIT", "EMOT"]
+      separator: "|"
+      emotions:
+        classes: ["joy", "fear", "anger", "sadness", "disgust", "shame", "guilt"]
+
+emotions: ${data.datasets.${data.name}.emotions}
+
+model:
+  provider: "lmstudio"
+  lmstudio:
+    base_url: "http://localhost:1234/v1"
+    api_key: "lm-studio"
+    embedding_model: "text-embedding-bge-m3"
+
+analysis:
+  embedding:
+    method: "traditional"  # or "dec"
+    traditional:
+      reducer:
+        type: "pca" #"umap"  # or "pca"
+        pca:
+          n_components: 2
+        umap:
+          n_neighbors: 15
+          min_dist: 0.1
+          n_components: 2
+      clustering:
+        type: "kmeans"  # or "gmm"
+        k_range: [2, 3, 4, 5, 6, 7, 8, 9, 10]
+        kmeans:
+          n_init: 10
+          random_state: 42
+        gmm:
+          covariance_type: "full"
+          random_state: 42
+      best_k_criterion:
+        type: "intrinsic" #"extrinsic"  # "intrinsic", "extrinsic", "combined"
+        metric: "silhouette" #  "normalized_mutual_info"  # "average", "silhouette", "calinski_harabasz", "davies_bouldin_inverted", "adjusted_rand", "normalized_mutual_info"
+    dec:
+      pretrain_epochs: 100
+      clustering_epochs: 100
+      batch_size: 256
+      update_interval: 140
+      tol: 0.001
+      learning_rate: 0.001
+      hidden_dims: [500, 500, 2000, 10]
+    visualization:
+      scatter:
+        cmap: "Set2"
+        alpha: 0.7
+      heatmap:
+        cmap: "RdYlBu_r"
+        fmt: ".2f"
+    metrics:
+      intrinsic: ["silhouette", "calinski_harabasz", "davies_bouldin"]
+      extrinsic: ["adjusted_rand", "normalized_mutual_info"]
+
