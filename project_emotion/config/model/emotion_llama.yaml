@@ -1,0 +1,6 @@
+
+name: "emotion_llama"
+pretrained: "ZebangCheng/Emotion-LLaMA"
+max_length: 512
+temperature: 0.7
+num_classes: 7

@@ -1,0 +1,25 @@
+name: "resnet"
+architecture: "resnet18"  # resnet18, resnet34, resnet50, etc.
+pretrained: true
+grayscale: true  # grayscale 입력을 위한 첫 번째 conv layer 수정
+
+# 분류기 설정
+classifier:
+  hidden_size: 512
+  dropout: 0.3
+  use_batch_norm: true
+  activation: "relu"
+  hidden_sizes: [512, 256]  # 각 레이어의 크기
+
+# 모델 freezing 설정
+freeze:
+  enabled: true
+  num_unfrozen_layers: 2  # 마지막 N개의 레이어만 학습
+
+training:
+  weight_decay: 1e-4
+  learning_rate: 1e-4
+  scheduler:
+    enabled: true
+    type: "cosine"
+    warmup_epochs: 5 

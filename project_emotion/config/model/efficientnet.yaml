@@ -1,0 +1,25 @@
+name: "efficientnet"
+architecture: "efficientnet_b0"  # b0, b1, b2, etc.
+pretrained: true
+grayscale: true
+
+# 분류기 설정
+classifier:
+  hidden_size: 512
+  dropout: 0.3
+  use_batch_norm: true
+  activation: "relu"
+  hidden_sizes: [512, 256]
+
+# 모델 freezing 설정
+freeze:
+  enabled: true
+  num_unfrozen_layers: 2
+
+training:
+  weight_decay: 1e-4
+  learning_rate: 1e-4
+  scheduler:
+    enabled: true
+    type: "cosine"
+    warmup_epochs: 5 
